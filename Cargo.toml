@@ -1,0 +1,46 @@
+[package]
+name = "schema_guard"
+version = "1.6.1"
+authors = ["DBinvent <support@dbinvent.com>"]
+edition = "2018"
+description = "Schema Guard: Relation DataBase (Schema) Management tool"
+homepage = "https://www.dbinvent.com/rdbm/"
+readme = "README.md"
+
+
+[lib]
+name = "schema_guard"
+path = "src/lib.rs"
+
+[dependencies]
+
+slog = { version = "^2.7.0", features=["max_level_debug"] }
+slog-async = "^2.6.0"
+slog-envlogger = "^2.2.0"
+slog-stdlog = "^4.1.0"
+slog-term = "^2.8.0"
+sloggers = "^2.0.0"
+lazy_static = "^1.4.0"
+postgres = { version = "^0.19.1", features=["with-chrono-0_4", "with-time-0_2"] }
+
+chrono="^0.4.19"
+time = "^0.3.20"
+serde = { version = "^1.0", features = ["derive"] }
+
+serde_json = "^1.0.64"
+serde_yaml = "^0.9.19"
+yaml-rust = "^0.4.5"
+
+yaml-validator = "0.2.0"
+
+postgres-native-tls = { version = "^0.5.0", optional = true }
+native-tls = { version = "^0.2.11", optional = true }
+
+bb8 = { version = "0.8.3", optional = true }
+bb8-postgres = {version = "0.8.0", optional = true}
+tokio = { version = "^1.36.0", optional = true }
+tokio-postgres = { version = "^0.7.1", optional = true }
+
+[features]
+slog = []
+bb8 = ["dep:bb8", "dep:bb8-postgres", "dep:tokio", "dep:tokio-postgres"]

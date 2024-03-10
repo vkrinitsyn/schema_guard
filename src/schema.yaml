@@ -1,0 +1,269 @@
+---
+uri: database
+schema:
+  type: object
+  items:
+    database:
+      type: array
+      items:
+        $ref: schema
+
+---
+uri: schema
+schema:
+  type: object
+  items:
+    schema:
+      type: string
+    schemaName:
+      type: string
+    owner:
+      type: string
+    tables:
+      type: array
+      items:
+        $ref: table
+    # reserved for future usage - not yet implemented
+    roles:
+      type: array
+      items:
+        $ref: role
+    functions:
+      type: array
+      items:
+        $ref: function
+    procedures:
+      type: array
+      items:
+        $ref: procedure
+    views:
+      type: array
+      items:
+        $ref: view
+    sequences:
+      type: array
+      items:
+        $ref: sequence
+
+
+---
+uri: grant
+schema:
+  type: object
+  # grant those privileges to user(s)
+  items:
+    all:
+      type: string
+    select:
+      type: string
+    insert:
+      type: string
+    update:
+      type: string
+    delete:
+      type: string
+    truncate:
+      type: string
+    references:
+      type: string
+    trigger:
+      type: string
+    create:
+      type: string
+    connect:
+      type: string
+    temporary:
+      type: string
+    execute:
+      type: string
+    usage:
+      type: string
+    # optional WITH GRANT OPTION
+    with_grant_option:
+      type: boolean
+    # optional GRANTED BY
+    by:
+      type: string
+
+---
+uri: column
+schema:
+  type: object
+  items:
+    column:
+      type: object
+      items:
+        name:
+          type: string
+        type:
+          type: string
+        defaultValue:
+          type: string
+        constraint:
+          type: object
+          items:
+            primaryKey:
+              type: boolean
+            nullable:
+              type: boolean
+            foreignKey:
+              type: object
+              items:
+                references:
+                  type: string
+                sql:
+                  type: string
+        index:
+          type: object
+          items:
+            name:
+              # if multiple columns having same index name, then the single index will be created for the set of those columns
+              type: string
+            sql:
+              type: string
+        description:
+          type: string
+        sql:
+          type: string
+
+---
+uri: trigger
+schema:
+  type: object
+  items:
+    trigger:
+      type: object
+      items:
+        name:
+          type: string
+        event:
+          type: string
+        when:
+          type: string
+        proc:
+          type: string
+
+---
+uri: etl
+schema:
+  type: object
+  items:
+    file:
+      type: string
+
+# data to insert into the table with arrays of string representation values, in order of columns defined for a table
+---
+uri: row
+schema:
+  type: array
+  items:
+    type: string
+
+
+---
+uri: table
+schema:
+  type: object
+  items:
+    table:
+      type: object
+      items:
+        tableName:
+          type: string
+        description:
+          type: string
+        constraint:
+          type: string
+        sql:
+          type: string
+        transaction:
+          type: string
+        columns:
+          type: array
+          items:
+            $ref: column
+        triggers:
+          type: array
+          items:
+            $ref: trigger
+        data_file:
+          # etl to and from the file specified
+          type: string
+        data:
+          # insert data from inline values
+          type: array
+          items:
+            $ref: row
+        owner:
+          type: string
+        grant:
+          type: array
+          items:
+            $ref: grant
+        template: # hold for future usage
+          oneOf:
+            #  this table will not create
+            - type: boolean
+            - type: array
+              # names of schema.table defined in this file with a template flag ON
+              # all configs from certain tables will be copied over in the order of the list, then all configs of this table will be applied
+              items:
+                type: string
+
+
+# TODO implementation those objects:
+---
+uri: role
+schema:
+  type: object
+  items:
+    role:
+      type: object
+      items:
+        name:
+          type: string
+
+---
+uri: function
+schema:
+  type: object
+  items:
+    function:
+      type: object
+      items:
+        name:
+          type: string
+
+---
+uri: procedure
+schema:
+  type: object
+  items:
+    procedure:
+      type: object
+      items:
+        name:
+          type: string
+
+---
+uri: view
+schema:
+  type: object
+  items:
+    view:
+      type: object
+      items:
+        name:
+          type: string
+
+---
+uri: sequence
+schema:
+  type: object
+  items:
+    sequence:
+      type: object
+      items:
+        name:
+          type: string
+

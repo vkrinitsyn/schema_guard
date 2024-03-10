@@ -1,0 +1,47 @@
+database:
+  - schema:
+    schemaName: test_schema
+    owner: postgres
+    tables:
+      - table:
+          tableName: test_table
+          description: The new table
+          constraint: -- some SQL as table constraint
+          # those values will be considered as SQL statements comments and will be ignored
+          sql: -- some SQL suffix on table create
+          columns:
+            - column:
+                name: id
+                type: serial
+                defaultValue:
+                constraint:
+                  primaryKey: true
+                  nullable: false
+                  foreignKey:
+                    references: --fk_table, usually
+                    sql: -- some SQL suffix on new FK create, like- on delete no action on update no action
+                description:
+                sql: -- some SQL suffix on new column create
+                index:
+                  name: pk
+            - column:
+                name: test
+                type: varchar(250)
+          triggers:
+            - trigger:
+                name: uniq_name_of_trigger
+                event: before update
+                when: for each row
+                proc:
+          grant:
+            - all: postgres
+
+          data_file: "data.cvs"
+          data:
+            - ['1', 'test1']
+            - ['2', 'test2']
+
+#    views:
+#      - view:
+#          name: postgres
+
