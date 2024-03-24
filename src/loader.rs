@@ -145,7 +145,6 @@ impl PgColumnDfn {
 }
 
 
-#[cfg(not(feature = "bb8"))]
 pub fn load_info_schema(db_name: &str, db: &mut Transaction) -> Result<InfoSchemaType, String> {
     let mut data = load_info_cc(db_name, db)?;
     let _ = load_info_fk(db_name, db, &mut data)?;
@@ -153,16 +152,6 @@ pub fn load_info_schema(db_name: &str, db: &mut Transaction) -> Result<InfoSchem
     Ok(data)
 }
 
-#[cfg(feature = "bb8")]
-pub async fn load_info_schema(db_name: &str, db: &mut tokio_postgres::Transaction<'_>) -> Result<InfoSchemaType, String> {
-    /*
-    let mut data = load_info_cc(db_name, db)?;
-    let _ = load_info_fk(db_name, db, &mut data)?;
-    let _ = load_info_tg(db_name, db, &mut data)?;
-    Ok(data)
-     */
-    unimplemented!()
-}
 
 // SELECT table_catalog, table_schema, table_name, column_name, column_default, is_nullable, data_type, udt_name, character_maximum_length, numeric_precision, numeric_scale, ordinal_position from information_schema.columns where table_schema not in ('pg_catalog', 'information_schema') and table_name = table_catalog = $1
 #[inline]

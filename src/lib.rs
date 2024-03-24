@@ -10,10 +10,6 @@ use std::sync::{Arc, RwLock};
 use lazy_static::lazy_static;
 use postgres::Client;
 
-#[cfg(feature = "bb8")] use bb8_postgres::bb8::PooledConnection;
-#[cfg(feature = "bb8")] use bb8_postgres::PostgresConnectionManager;
-#[cfg(feature = "bb8")] use bb8_postgres::tokio_postgres::NoTls;
-
 
 use slog::Logger;
 use yaml_rust::YamlLoader;
@@ -60,46 +56,12 @@ pub fn get_schema() -> Vec<Yaml> {
     SCHEMA_YAMLS.clone()
 }
 
-#[cfg(not(feature = "bb8"))]
 
 /// simplified migrate
 pub fn migrate1(schema: Yaml, db: &mut Client) -> Result<usize, String> {
     migrate(schema, db, false, None::<&dyn Fn(Vec<String>) -> Result<(), String>>, "")
 }
 
-#[cfg(feature = "bb8")]
-pub async fn migrate1(schema: Yaml, db: &mut PooledConnection<'static, PostgresConnectionManager<NoTls>>) -> Result<usize, String> {
-    migrate(schema, db, false, None::<&dyn Fn(Vec<String>) -> Result<(), String>>, "").await
-}
-
-#[cfg(feature = "bb8")]
-pub async fn migrate(schema: Yaml, db: &mut PooledConnection<'static, PostgresConnectionManager<NoTls>>, retry: bool,
-               dry_run: Option<&dyn Fn(Vec<String>) -> Result<(), String>>, file_name: &str
-) -> Result<usize, String> {
-    let mut db = db.transaction().await.map_err(|e| format!("DB connection error: {}", e))?;
-    let mut cnt = 0;
-    // check db connection
-    let db_name: String = db.query("select current_database()", &[]).await
-        .map_err(|e| format!("DB connection error: {}", e))?[0].get(0);
-    // load schema
-    let mut info = load_info_schema(db_name.as_str(), &mut db).await?;
-
-    let schemas = parse_yaml_schema(schema, file_name)?;
-    /*
-    for s in &schemas.list {
-        cnt += s.deploy_all_tables(&mut info, &mut db, retry, dry_run)?;
-    }
-
-    for s in &schemas.list {
-        cnt += s.deploy_all_fk(&schemas, &mut info, &mut db, retry, dry_run)?;
-    }
-
-    let _ = db.commit().map_err(|e| format!("committing error: {}", e))?;
-    */
-    Ok(cnt)
-}
-
-#[cfg(not(feature = "bb8"))]
 /// main entry point to apply schema from yaml to the database
 /// return statements to execute
 ///

@@ -3,10 +3,12 @@ name = "schema_guard"
 version = "1.6.1"
 authors = ["DBinvent <support@dbinvent.com>"]
 edition = "2018"
-description = "Schema Guard: Relation DataBase (Schema) Management tool"
-homepage = "https://www.dbinvent.com/rdbm/"
+description = "Schema Guard: Relation Database (Schema) Management tool"
+homepage = "https://github.com/vkrinitsyn/schema_guard"
 readme = "README.md"
-
+documentation = "https://www.dbinvent.com/rdbm/guide/getting-started#declarative"
+repository = "https://github.com/vkrinitsyn/schema_guard"
+license = "MIT"
 
 [lib]
 name = "schema_guard"
@@ -43,4 +45,3 @@ tokio-postgres = { version = "^0.7.1", optional = true }
 
 [features]
 slog = []
-bb8 = ["dep:bb8", "dep:bb8-postgres", "dep:tokio", "dep:tokio-postgres"]
