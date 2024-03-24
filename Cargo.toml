@@ -1,7 +1,7 @@
 [package]
 name = "schema_guard"
 version = "1.6.1"
-authors = ["DBinvent <support@dbinvent.com>"]
+authors = ["V.Krinitsyn <V.Krinitsyn@gmail.com>"]
 edition = "2018"
 description = "Schema Guard: Relation Database (Schema) Management tool"
 homepage = "https://github.com/vkrinitsyn/schema_guard"
