@@ -26,6 +26,11 @@ use crate::utils::OrderedHashMap;
 
 use self::yaml_rust::Yaml;
 
+
+#[cfg(feature = "bb8")]
+pub mod loader_a;
+
+#[cfg(not(feature = "bb8"))]
 pub mod loader;
 pub mod table;
 pub mod column;
@@ -175,8 +180,6 @@ pub fn parse_yaml_schema(yaml: Yaml, file_name: &str) -> Result<OrderedHashMap<S
         }
     }
 }
-
-
 
 #[cfg(test)]
 mod tests {

@@ -40,7 +40,10 @@ bb8 = { version = "0.8.3", optional = true }
 bb8-postgres = {version = "0.8.0", optional = true}
 tokio = { version = "^1.36.0", optional = true }
 tokio-postgres = { version = "^0.7.1", optional = true }
+#toml = { version = "0.8.11", optional = true }
+#diesel = "2.1.4"
 
 [features]
 slog = []
 bb8 = ["dep:bb8", "dep:bb8-postgres", "dep:tokio", "dep:tokio-postgres"]
+#diesel = ["dep:toml"]

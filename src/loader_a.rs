@@ -144,6 +144,8 @@ impl PgColumnDfn {
     }
 }
 
+
+#[cfg(not(feature = "bb8"))]
 pub fn load_info_schema(db_name: &str, db: &mut Transaction) -> Result<InfoSchemaType, String> {
     let mut data = load_info_cc(db_name, db)?;
     let _ = load_info_fk(db_name, db, &mut data)?;
@@ -151,14 +153,34 @@ pub fn load_info_schema(db_name: &str, db: &mut Transaction) -> Result<InfoSchem
     Ok(data)
 }
 
+#[cfg(feature = "bb8")]
+pub async fn load_info_schema(db_name: &str, db: &mut tokio_postgres::Transaction<'_>) -> Result<InfoSchemaType, String> {
+    /*
+    let mut data = load_info_cc(db_name, db)?;
+    let _ = load_info_fk(db_name, db, &mut data)?;
+    let _ = load_info_tg(db_name, db, &mut data)?;
+    Ok(data)
+     */
+    unimplemented!()
+}
+
+#[cfg(feature = "bb8")]
+pub async fn load_info_schema_cc(db_name: &str, db: &mut tokio_postgres::Transaction<'_>) -> Result<InfoSchemaType, String> {
+    let mut data: InfoSchemaType = Default::default();
+    let result = db.query("", &[&db_name]).await.map_err(|e| e.to_string())?;
+    Ok(data)
+}
+
 // SELECT table_catalog, table_schema, table_name, column_name, column_default, is_nullable, data_type, udt_name, character_maximum_length, numeric_precision, numeric_scale, ordinal_position from information_schema.columns where table_schema not in ('pg_catalog', 'information_schema') and table_name = table_catalog = $1
 #[inline]
-fn load_info_cc(db_name: &str, db: &mut Transaction) -> Result<InfoSchemaType, String> {
+async
+fn load_info_cc(db_name: &str, db: &mut tokio_postgres::Transaction<'_>) -> Result<InfoSchemaType, String> {
     let mut data: InfoSchemaType = Default::default();
     let result = db.query("SELECT table_catalog, table_schema, table_name, column_name, column_default, is_nullable, \
     data_type, udt_name, character_maximum_length, numeric_precision, numeric_scale, ordinal_position \
      from information_schema.columns where table_schema not in ('pg_catalog', 'information_schema') and table_catalog = $1 \
       order by 1,2,3, ordinal_position", &[&db_name])
+        .await
         .map_err(|e| format!("on loading information_schema [{}]: {}", db_name, e))?;
     let mut sort_order = 0;
     for r in result {
@@ -320,7 +342,7 @@ WHERE cols.table_schema not in ('pg_catalog', 'information_schema')  AND cols.ta
 }
 
 #[inline]
-fn load_info_tg(db_name: &str, db: &mut Transaction, data: &mut InfoSchemaType) -> Result<(), String> {
+async fn load_info_tg(db_name: &str, db: &mut Transaction, data: &mut InfoSchemaType) -> Result<(), String> {
     match db.query("SELECT trigger_catalog, trigger_schema, trigger_name, event_object_catalog, event_object_schema, event_object_table \
         from information_schema.triggers where event_object_schema not in ('pg_catalog', 'information_schema') and trigger_catalog = $1 \
         order by created", &[&db_name]) {
@@ -362,8 +384,7 @@ fn load_info_tg(db_name: &str, db: &mut Transaction, data: &mut InfoSchemaType) 
 const NO_ACTION: &str = "NO ACTION";
 
 #[inline]
-// db: &mut Transaction,
-// db: &mut Client
+async
 fn load_info_fk(db_name: &str, db: &mut Transaction, data: &mut InfoSchemaType) -> Result<(), String> {
     match db.query("SELECT tc.table_schema,  tc.table_name, kcu.column_name,
  ccu.table_schema AS foreign_schema_name, ccu.table_name AS foreign_table_name, ccu.column_name AS foreign_column_name, tc.constraint_name,
@@ -372,7 +393,9 @@ fn load_info_fk(db_name: &str, db: &mut Transaction, data: &mut InfoSchemaType) 
  JOIN information_schema.key_column_usage AS kcu ON tc.constraint_name = kcu.constraint_name
  JOIN information_schema.constraint_column_usage AS ccu ON ccu.constraint_name = tc.constraint_name
  join information_schema.referential_constraints as rc on tc.constraint_name = rc.constraint_name
- WHERE constraint_type = 'FOREIGN KEY' and tc.table_catalog = $1", &[&db_name]) {
+ WHERE constraint_type = 'FOREIGN KEY' and tc.table_catalog = $1", &[&db_name])
+        .await
+    {
         Err(e) => Err(format!("on loading information_schema.fk: {}", e)),
         Ok(result) => {
             for r in result {
@@ -425,7 +448,9 @@ fn load_info_fk(db_name: &str, db: &mut Transaction, data: &mut InfoSchemaType) 
 }
 
 #[inline]
-pub fn load_info_schema_owner(db_name: &str, db: &mut Transaction) -> Result<InfoSchemaOwnerType, String> {
+pub
+async // for easy diff
+fn load_info_schema_owner(db_name: &str, db: &mut Transaction) -> Result<InfoSchemaOwnerType, String> {
     let mut res = HashMap::new();
     match db.query("select schema_name, schema_owner from information_schema.schemata where schema_name not in ('information_schema', 'pg_catalog')", &[]) {
         Ok(schemas) => {
