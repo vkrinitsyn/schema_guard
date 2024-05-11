@@ -1,12 +1,14 @@
 [package]
 name = "schema_guard_tokio"
 version = "1.8.1"
-authors = ["DBinvent <support@dbinvent.com>"]
+authors = ["V.Krinitsyn <V.Krinitsyn@gmail.com>"]
 edition = "2018"
-description = "Schema Guard: Relation (Postgres) DataBase (Schema) Management tool with  BB8 and Tokio support"
+description = "Schema Guard: Relation (Postgres) DataBase (Schema) Management tool with BB8 and Tokio support"
 homepage = "https://www.dbinvent.com/rdbm/"
 readme = "README.md"
-
+documentation = "https://www.dbinvent.com/rdbm/guide/getting-started#declarative"
+repository = "https://github.com/vkrinitsyn/schema_guard"
+license = "MIT"
 
 [lib]
 name = "schema_guard_tokio"
