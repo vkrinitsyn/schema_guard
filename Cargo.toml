@@ -1,15 +1,15 @@
 [package]
-name = "schema_guard"
-version = "1.6.1"
+name = "schema_guard_tokio"
+version = "1.8.1"
 authors = ["DBinvent <support@dbinvent.com>"]
 edition = "2018"
-description = "Schema Guard: Relation DataBase (Schema) Management tool"
+description = "Schema Guard: Relation (Postgres) DataBase (Schema) Management tool with  BB8 and Tokio support"
 homepage = "https://www.dbinvent.com/rdbm/"
 readme = "README.md"
 
 
 [lib]
-name = "schema_guard"
+name = "schema_guard_tokio"
 path = "src/lib.rs"
 
 [dependencies]
@@ -33,17 +33,12 @@ yaml-rust = "^0.4.5"
 
 yaml-validator = "0.2.0"
 
-postgres-native-tls = { version = "^0.5.0", optional = true }
-native-tls = { version = "^0.2.11", optional = true }
-
-bb8 = { version = "0.8.3", optional = true }
-bb8-postgres = {version = "0.8.0", optional = true}
-tokio = { version = "^1.36.0", optional = true }
-tokio-postgres = { version = "^0.7.1", optional = true }
-#toml = { version = "0.8.11", optional = true }
-#diesel = "2.1.4"
+postgres-native-tls = { version = "^0.5.0"}
+native-tls = { version = "^0.2.11"}
+bb8 = { version = "0.8.3"}
+bb8-postgres = {version = "0.8.0", features = ["with-chrono-0_4","with-uuid-0_8"]}
+tokio = { version = "^1.36.0", features = ["test-util", "full"]}
+tokio-postgres = { version = "^0.7.1"}
 
 [features]
 slog = []
-bb8 = ["dep:bb8", "dep:bb8-postgres", "dep:tokio", "dep:tokio-postgres"]
-#diesel = ["dep:toml"]

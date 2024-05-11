@@ -5,14 +5,13 @@ extern crate yaml_rust;
 use std::convert::TryFrom;
 use std::fs;
 use std::result::Result;
+use std::str::FromStr;
 use std::sync::{Arc, RwLock};
+use std::time::Duration;
+use bb8::Pool;
+use bb8_postgres::PostgresConnectionManager;
 
 use lazy_static::lazy_static;
-use postgres::Client;
-
-#[cfg(feature = "bb8")] use bb8_postgres::bb8::PooledConnection;
-#[cfg(feature = "bb8")] use bb8_postgres::PostgresConnectionManager;
-#[cfg(feature = "bb8")] use bb8_postgres::tokio_postgres::NoTls;
 
 
 use slog::Logger;
@@ -26,11 +25,6 @@ use crate::utils::OrderedHashMap;
 
 use self::yaml_rust::Yaml;
 
-
-#[cfg(feature = "bb8")]
-pub mod loader_a;
-
-#[cfg(not(feature = "bb8"))]
 pub mod loader;
 pub mod table;
 pub mod column;
@@ -65,69 +59,54 @@ pub fn get_schema() -> Vec<Yaml> {
     SCHEMA_YAMLS.clone()
 }
 
-#[cfg(not(feature = "bb8"))]
+//         let pool = PgPoolOptions::new()
+//             .max_connections(1)  // use only on init
+//             .connect(c.db_url().as_str()).await
 
 /// simplified migrate
-pub fn migrate1(schema: Yaml, db: &mut Client) -> Result<usize, String> {
-    migrate(schema, db, false, None::<&dyn Fn(Vec<String>) -> Result<(), String>>, "")
+// pub async fn migrate1(schema: Yaml, db: &mut PooledConnection<'static, PostgresConnectionManager<NoTls>>) -> Result<usize, String> {
+pub async fn migrate1(schema: Yaml, db_url: &str) -> Result<usize, String> {
+    let config = bb8_postgres::tokio_postgres::config::Config::from_str(db_url)
+        .map_err(|e| format!("Parsing DB url: {}", e))?;
+    let pg_mgr = PostgresConnectionManager::new(config, bb8_postgres::tokio_postgres::NoTls);
+    let pool = Pool::builder().connection_timeout(Duration::from_secs(1))
+        .build(pg_mgr).await
+        .map_err(|e| format!("Connecting error: {}", e))?;
+    let mut db = pool.get().await
+        .map_err(|e| format!("Getting connection from the pool to start a transaction: {}", e))?;
+    let mut d = db.transaction().await
+        .map_err(|e| format!("Starting Transaction: {}", e))?;
+
+    let x = migrate(schema, &mut d, false, None::<&dyn Fn(Vec<String>) -> Result<(), String>>, "").await?;
+
+    let _ = d.commit().await.map_err(|e| format!("Committing Transaction error: {}", e))?;
+    Ok(x)
 }
 
-#[cfg(feature = "bb8")]
-pub async fn migrate1(schema: Yaml, db: &mut PooledConnection<'static, PostgresConnectionManager<NoTls>>) -> Result<usize, String> {
-    migrate(schema, db, false, None::<&dyn Fn(Vec<String>) -> Result<(), String>>, "").await
-}
 
-#[cfg(feature = "bb8")]
-pub async fn migrate(schema: Yaml, db: &mut PooledConnection<'static, PostgresConnectionManager<NoTls>>, retry: bool,
-               dry_run: Option<&dyn Fn(Vec<String>) -> Result<(), String>>, file_name: &str
-) -> Result<usize, String> {
-    let mut db = db.transaction().await.map_err(|e| format!("DB connection error: {}", e))?;
-    let mut cnt = 0;
-    // check db connection
-    let db_name: String = db.query("select current_database()", &[]).await
-        .map_err(|e| format!("DB connection error: {}", e))?[0].get(0);
-    // load schema
-    let mut info = load_info_schema(db_name.as_str(), &mut db).await?;
-
-    let schemas = parse_yaml_schema(schema, file_name)?;
-    /*
-    for s in &schemas.list {
-        cnt += s.deploy_all_tables(&mut info, &mut db, retry, dry_run)?;
-    }
-
-    for s in &schemas.list {
-        cnt += s.deploy_all_fk(&schemas, &mut info, &mut db, retry, dry_run)?;
-    }
-
-    let _ = db.commit().map_err(|e| format!("committing error: {}", e))?;
-    */
-    Ok(cnt)
-}
-
-#[cfg(not(feature = "bb8"))]
 /// main entry point to apply schema from yaml to the database
 /// return statements to execute
 ///
-pub fn migrate(schema: Yaml, dbc: &mut Client, retry: bool,
+pub async fn migrate(schema: Yaml, db: &mut tokio_postgres::Transaction<'_>, retry: bool,
                dry_run: Option<&dyn Fn(Vec<String>) -> Result<(), String>>, file_name: &str
 ) -> Result<usize, String> {
-    let mut db = dbc.transaction().map_err(|e| format!("{}", e))?;
+    // let mut db = dbc.transaction().map_err(|e| format!("{}", e))?;
     let mut cnt = 0;
     // check db connection
     let db_name: String = db.query("select current_database()", &[])
-        .map_err(|e| format!("DB connection error: {}", e))?[0].get(0);
+        .await.map_err(|e| format!("DB connection error: {}", e))?[0].get(0);
     // load schema
-    let mut info = load_info_schema(db_name.as_str(), &mut db)?;
+    let mut info = load_info_schema(db_name.as_str(), db).await?;
     let schemas = parse_yaml_schema(schema, file_name)?;
     for s in &schemas.list {
-        cnt += s.deploy_all_tables(&mut info, &mut db, retry, dry_run)?;
+        cnt += s.deploy_all_tables(&mut info, db, retry, dry_run).await?;
     }
 
     for s in &schemas.list {
-        cnt += s.deploy_all_fk(&schemas, &mut info, &mut db, retry, dry_run)?;
+        cnt += s.deploy_all_fk(&schemas, &mut info, db, retry, dry_run).await?;
     }
 
-    let _ = db.commit().map_err(|e| format!("committing error: {}", e))?;
+    // let _ = db.commit().map_err(|e| format!("committing error: {}", e))?;
     Ok(cnt)
 }
 
@@ -181,12 +160,14 @@ pub fn parse_yaml_schema(yaml: Yaml, file_name: &str) -> Result<OrderedHashMap<S
     }
 }
 
+
+
 #[cfg(test)]
 mod tests {
     use crate::{load_schema_from_file, parse_yaml_schema};
-
-    #[test]
-    fn test_schema() {
+    #[tokio::test]
+    // #[test]
+    async fn test_schema() {
 
         let r = parse_yaml_schema(load_schema_from_file("tests/example.yaml").unwrap(), "").unwrap();
         assert_eq!(r.len(), 1);

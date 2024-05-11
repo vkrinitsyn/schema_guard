@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
-use postgres::Transaction;
 use serde::Serialize;
 use yaml_rust::Yaml;
 use yaml_rust::yaml::Array;
@@ -267,10 +266,10 @@ impl Table {
 
     /// build a create or alter sql
     #[allow(unused_mut)]
-    pub fn deploy(
+    pub async fn deploy(
         &self,
         dbc: &mut InfoSchemaType,
-        db: &mut Transaction,
+        db: &mut tokio_postgres::Transaction<'_>,
         schema: &String, // this
         is_retry: bool,
         file: &str,
@@ -420,11 +419,11 @@ impl Table {
                 #[cfg(feature = "slog")] log_debug(format!("deploy SQL {:?}[{}:{}]> {}", exec, file, schema, sql));
                 if exec {
                     let source = if file.len() > 0 { format!(", source: {}", file)} else {"".to_string()};
-                    let _ = db.batch_execute(sql.as_str())
+                    let _ = db.batch_execute(sql.as_str()).await
                         .map_err(|e| format!("DB execute [{}]: {} {}", sql, e, source))?;
-                    let _ = db.batch_execute(comments.as_str())
+                    let _ = db.batch_execute(comments.as_str()).await
                         .map_err(|e| format!("DB execute [{}]: {} {}", comments, e, source))?;
-                    let _ = db.batch_execute(data.as_str())
+                    let _ = db.batch_execute(data.as_str()).await
                         .map_err(|e| format!("DB execute [{}]: {} {}", data, e, source))?;
                 }
                 Ok(exec)
@@ -484,12 +483,12 @@ impl Table {
 
     /// build a create or alter sql
     #[allow(unused, unused_mut)]
-    pub fn deploy_fk(
+    pub async fn deploy_fk(
         &self,
         // target: &FileVersion,
         schemas: &OrderedHashMap<Schema>, //FilesMap,
         dbc: &mut InfoSchemaType,
-        db: &mut Transaction,
+        db: &mut tokio_postgres::Transaction<'_>,
         schema: &String,
         is_retry: bool,
         file: &str,
@@ -553,7 +552,7 @@ impl Table {
             }
             None => {
                 if exec {
-                    if let Err(e) = db.batch_execute(sql.as_str()) {
+                    if let Err(e) = db.batch_execute(sql.as_str()).await {
                         return Err(format!("DB FK execute [{}]: {} source: {}", sql, e, file));
                     }
                     Ok(exec)

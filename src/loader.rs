@@ -1,9 +1,9 @@
-extern crate postgres;
+// extern crate postgres;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::result::Result;
 
-use postgres::Transaction;
+// use postgres::Transaction;
 use serde::Serialize;
 
 use crate::utils::{Named, OrderedHashMap};
@@ -144,21 +144,24 @@ impl PgColumnDfn {
     }
 }
 
-pub fn load_info_schema(db_name: &str, db: &mut Transaction) -> Result<InfoSchemaType, String> {
-    let mut data = load_info_cc(db_name, db)?;
-    let _ = load_info_fk(db_name, db, &mut data)?;
-    let _ = load_info_tg(db_name, db, &mut data)?;
+
+pub async fn load_info_schema(db_name: &str, db: &mut tokio_postgres::Transaction<'_>) -> Result<InfoSchemaType, String> {
+
+    let mut data = load_info_cc(db_name, db).await?;
+    let _ = load_info_fk(db_name, db, &mut data).await?;
+    let _ = load_info_tg(db_name, db, &mut data).await?;
     Ok(data)
 }
 
 // SELECT table_catalog, table_schema, table_name, column_name, column_default, is_nullable, data_type, udt_name, character_maximum_length, numeric_precision, numeric_scale, ordinal_position from information_schema.columns where table_schema not in ('pg_catalog', 'information_schema') and table_name = table_catalog = $1
 #[inline]
-fn load_info_cc(db_name: &str, db: &mut Transaction) -> Result<InfoSchemaType, String> {
+async fn load_info_cc(db_name: &str, db: &mut tokio_postgres::Transaction<'_>) -> Result<InfoSchemaType, String> {
     let mut data: InfoSchemaType = Default::default();
     let result = db.query("SELECT table_catalog, table_schema, table_name, column_name, column_default, is_nullable, \
     data_type, udt_name, character_maximum_length, numeric_precision, numeric_scale, ordinal_position \
      from information_schema.columns where table_schema not in ('pg_catalog', 'information_schema') and table_catalog = $1 \
       order by 1,2,3, ordinal_position", &[&db_name])
+        .await
         .map_err(|e| format!("on loading information_schema [{}]: {}", db_name, e))?;
     let mut sort_order = 0;
     for r in result {
@@ -233,7 +236,7 @@ fn load_info_cc(db_name: &str, db: &mut Transaction) -> Result<InfoSchemaType, S
     FROM information_schema.tables tabs
     WHERE tabs.table_schema not in ('pg_catalog', 'information_schema') AND tabs.table_catalog = $1
      and tabs.table_name in ({})
-    ) as ist WHERE ist.table_comment is not null order by 1,2", tables).as_str(), &[&db_name])
+    ) as ist WHERE ist.table_comment is not null order by 1,2", tables).as_str(), &[&db_name]).await
                 .map_err(|e| format!("on loading table_comment from information_schema [{}]: {}", db_name, e))?;
             for r in result {
                 // let table_schema: &str = r.get(0);
@@ -245,7 +248,7 @@ fn load_info_cc(db_name: &str, db: &mut Transaction) -> Result<InfoSchemaType, S
             }
 
             let result = db.query("SELECT schemaname, tablename, tableowner from pg_tables where schemaname = $1 ",
-                                  &[&schema])
+                                  &[&schema]).await
                 .map_err(|e| format!("on loading table_owner from information_schema [{}]: {}", db_name, e))?;
             for r in result {
                 // let table_schema: &str = r.get(0);
@@ -261,7 +264,7 @@ fn load_info_cc(db_name: &str, db: &mut Transaction) -> Result<InfoSchemaType, S
 FROM information_schema.columns cols
 WHERE cols.table_schema not in ('pg_catalog', 'information_schema')  AND cols.table_catalog = $1
  AND cols.table_name in ({})
-) as iss where iss.column_comment is not null", tables).as_str(), &[&db_name])
+) as iss where iss.column_comment is not null", tables).as_str(), &[&db_name]).await
                 .map_err(|e| format!("on loading table_comment from information_schema [{}]: {}", db_name, e))?;
             for r in result {
                 // let table_schema: &str = r.get(0);
@@ -279,7 +282,7 @@ WHERE cols.table_schema not in ('pg_catalog', 'information_schema')  AND cols.ta
                     FROM pg_index i
                     JOIN pg_class pc on pc.oid = i.indrelid
                     JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
-                    WHERE (i.indisprimary or i.indisunique) and i.indrelid in ({})", query).as_str(), &[])
+                    WHERE (i.indisprimary or i.indisunique) and i.indrelid in ({})", query).as_str(), &[]).await
                 .map_err(|e| format!("on loading information_schema pk/uniq: {}", e))?;
             for r in result {
                 let table_name: &str = r.get(0);
@@ -320,10 +323,10 @@ WHERE cols.table_schema not in ('pg_catalog', 'information_schema')  AND cols.ta
 }
 
 #[inline]
-fn load_info_tg(db_name: &str, db: &mut Transaction, data: &mut InfoSchemaType) -> Result<(), String> {
+async fn load_info_tg(db_name: &str, db: &mut tokio_postgres::Transaction<'_>, data: &mut InfoSchemaType) -> Result<(), String> {
     match db.query("SELECT trigger_catalog, trigger_schema, trigger_name, event_object_catalog, event_object_schema, event_object_table \
         from information_schema.triggers where event_object_schema not in ('pg_catalog', 'information_schema') and trigger_catalog = $1 \
-        order by created", &[&db_name]) {
+        order by created", &[&db_name]).await {
         Err(e) => Err(format!("on loading information_schema.triggers: {}", e)),
         Ok(result) => {
             let mut sort_order = 0;
@@ -364,7 +367,7 @@ const NO_ACTION: &str = "NO ACTION";
 #[inline]
 // db: &mut Transaction,
 // db: &mut Client
-fn load_info_fk(db_name: &str, db: &mut Transaction, data: &mut InfoSchemaType) -> Result<(), String> {
+async fn load_info_fk(db_name: &str, db: &mut tokio_postgres::Transaction<'_>, data: &mut InfoSchemaType) -> Result<(), String> {
     match db.query("SELECT tc.table_schema,  tc.table_name, kcu.column_name,
  ccu.table_schema AS foreign_schema_name, ccu.table_name AS foreign_table_name, ccu.column_name AS foreign_column_name, tc.constraint_name,
  rc.match_option, rc.update_rule, rc.delete_rule
@@ -372,7 +375,7 @@ fn load_info_fk(db_name: &str, db: &mut Transaction, data: &mut InfoSchemaType) 
  JOIN information_schema.key_column_usage AS kcu ON tc.constraint_name = kcu.constraint_name
  JOIN information_schema.constraint_column_usage AS ccu ON ccu.constraint_name = tc.constraint_name
  join information_schema.referential_constraints as rc on tc.constraint_name = rc.constraint_name
- WHERE constraint_type = 'FOREIGN KEY' and tc.table_catalog = $1", &[&db_name]) {
+ WHERE constraint_type = 'FOREIGN KEY' and tc.table_catalog = $1", &[&db_name]).await {
         Err(e) => Err(format!("on loading information_schema.fk: {}", e)),
         Ok(result) => {
             for r in result {
@@ -425,9 +428,10 @@ fn load_info_fk(db_name: &str, db: &mut Transaction, data: &mut InfoSchemaType) 
 }
 
 #[inline]
-pub fn load_info_schema_owner(db_name: &str, db: &mut Transaction) -> Result<InfoSchemaOwnerType, String> {
+pub async fn load_info_schema_owner(db_name: &str, db: &mut tokio_postgres::Transaction<'_>) -> Result<InfoSchemaOwnerType, String> {
     let mut res = HashMap::new();
-    match db.query("select schema_name, schema_owner from information_schema.schemata where schema_name not in ('information_schema', 'pg_catalog')", &[]) {
+    match db.query("select schema_name, schema_owner from information_schema.schemata where schema_name not in ('information_schema', 'pg_catalog')",
+                   &[]).await {
         Ok(schemas) => {
             for schema in schemas {
                 let schema_name: &str = schema.get(0);
@@ -437,7 +441,7 @@ pub fn load_info_schema_owner(db_name: &str, db: &mut Transaction) -> Result<Inf
 from information_schema.tables t
 join pg_catalog.pg_class c on (t.table_name = c.relname)
 join pg_catalog.pg_user u on (c.relowner = u.usesysid)
-where t.table_schema = $1 and t.table_catalog = $2 ", &[&schema_name, &db_name]) {
+where t.table_schema = $1 and t.table_catalog = $2 ", &[&schema_name, &db_name]).await {
                     Err(e) => { return Err(format!("on loading information_schema.owner: {}", e)); }
                     Ok(result) => {
                         for r in result {

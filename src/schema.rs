@@ -1,4 +1,4 @@
-use postgres::Transaction;
+// use postgres::Transaction;
 use serde::Serialize;
 use yaml_rust::Yaml;
 
@@ -86,10 +86,10 @@ impl Schema {
 
     #[inline]
     /// return statements to execute
-    pub fn deploy_all_tables(&self, schema: &mut InfoSchemaType, db: &mut Transaction, retry: bool, dry_run: Option<&dyn Fn(Vec<String>) -> Result<(), String>>) -> Result<usize, String> {
+    pub async fn deploy_all_tables(&self, schema: &mut InfoSchemaType, db: &mut tokio_postgres::Transaction<'_>, retry: bool, dry_run: Option<&dyn Fn(Vec<String>) -> Result<(), String>>) -> Result<usize, String> {
         let mut cnt = 0;
         for t in &self.tables.list {
-            if t.deploy(schema, db, &self.schema_name, retry, self.file.as_str(), dry_run)? {
+            if t.deploy(schema, db, &self.schema_name, retry, self.file.as_str(), dry_run).await? {
                 cnt += 1;
             }
         }
@@ -98,10 +98,10 @@ impl Schema {
 
     #[inline]
     /// return statements to execute
-    pub fn deploy_all_fk(&self, schemas: &OrderedHashMap<Schema>, schema: &mut InfoSchemaType, db: &mut Transaction, retry: bool, dry_run: Option<&dyn Fn(Vec<String>) -> Result<(), String>>) -> Result<usize, String> {
+    pub async fn deploy_all_fk(&self, schemas: &OrderedHashMap<Schema>, schema: &mut InfoSchemaType, db: &mut tokio_postgres::Transaction<'_>, retry: bool, dry_run: Option<&dyn Fn(Vec<String>) -> Result<(), String>>) -> Result<usize, String> {
         let mut cnt = 0;
         for t in &self.tables.list {
-            if t.deploy_fk(schemas, schema, db, &self.schema_name, retry, self.file.as_str(), dry_run)? {
+            if t.deploy_fk(schemas, schema, db, &self.schema_name, retry, self.file.as_str(), dry_run).await? {
                 cnt += 1;
             }
         }
