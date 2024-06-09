@@ -273,7 +273,7 @@ impl Table {
         schema: &String, // this
         is_retry: bool,
         file: &str,
-        dry_run: Option<&dyn Fn(Vec<String>) -> Result<(), String>>,
+        dry_run: Option<&(dyn Fn(Vec<String>) -> Result<(), String> + Send + Sync)>,
     ) -> Result<bool, String> {
         let mut sql = String::new();
         let mut comments = String::new();
@@ -492,7 +492,7 @@ impl Table {
         schema: &String,
         is_retry: bool,
         file: &str,
-        dry_run: Option<&dyn Fn(Vec<String>) -> Result<(), String>>,
+        dry_run: Option<&(dyn Fn(Vec<String>) -> Result<(), String> + Send + Sync)>,
     ) -> Result<bool, String> {
         let mut sql = String::new();
         let mut fk_list = HashMap::new();

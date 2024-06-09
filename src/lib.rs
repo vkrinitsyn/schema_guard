@@ -77,7 +77,7 @@ pub async fn migrate1(schema: Yaml, db_url: &str) -> Result<usize, String> {
     let mut d = db.transaction().await
         .map_err(|e| format!("Starting Transaction: {}", e))?;
 
-    let x = migrate(schema, &mut d, false, None::<&dyn Fn(Vec<String>) -> Result<(), String>>, "").await?;
+    let x = migrate(schema, &mut d, false, None::<&(dyn Fn(Vec<String>) -> Result<(), String> + Send + Sync)>, "").await?;
 
     let _ = d.commit().await.map_err(|e| format!("Committing Transaction error: {}", e))?;
     Ok(x)
@@ -88,7 +88,7 @@ pub async fn migrate1(schema: Yaml, db_url: &str) -> Result<usize, String> {
 /// return statements to execute
 ///
 pub async fn migrate(schema: Yaml, db: &mut tokio_postgres::Transaction<'_>, retry: bool,
-               dry_run: Option<&dyn Fn(Vec<String>) -> Result<(), String>>, file_name: &str
+               dry_run: Option<&(dyn Fn(Vec<String>) -> Result<(), String> + Sync + Send)>, file_name: &str
 ) -> Result<usize, String> {
     // let mut db = dbc.transaction().map_err(|e| format!("{}", e))?;
     let mut cnt = 0;
