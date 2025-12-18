@@ -2,7 +2,7 @@
 
 ### Merging YAML defined schema and data into PostgreSQL database
 
-Create a file:
+Create a [YAML](yaml.md) file:
 
 ```yaml
 database:
