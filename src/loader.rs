@@ -137,6 +137,7 @@ impl PgColumnDfn {
         }
         if let Some(ssql) = &self.sql {
             if ssql.len() > 0 {
+                sql.push_str(" ");
                 sql.push_str(ssql.as_str());
             }
         }

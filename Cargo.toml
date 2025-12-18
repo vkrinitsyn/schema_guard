@@ -1,6 +1,6 @@
 [package]
 name = "schema_guard"
-version = "1.6.1"
+version = "1.6.2"
 authors = ["V.Krinitsyn <V.Krinitsyn@gmail.com>"]
 edition = "2018"
 description = "Schema Guard: Relation Database (Schema) Management tool"
