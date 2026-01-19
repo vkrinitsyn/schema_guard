@@ -540,9 +540,9 @@ impl Table {
                 }
             }
             append(format!(
-                "ALTER TABLE {}.{} ADD CONSTRAINT fk_{}_{}_{} FOREIGN KEY ({}) REFERENCES {}.{} ({}) {}",
+                "ALTER TABLE {}.{} ADD CONSTRAINT fk_{}_{}_{}_{} FOREIGN KEY ({}) REFERENCES {}.{} ({}) {}",
                 schema, self.table_name, schema, self.table_name, ff.table,
-                ff.name, ff.schema, &ff.table, ff.columns(), ff.sql
+                ff.name, ff.name, ff.schema, &ff.table, ff.columns(), ff.sql
             ).as_str(), &mut sql, is_retry);
         }
 
