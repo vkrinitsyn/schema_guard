@@ -31,6 +31,7 @@ database:
             - column:
                 name: test
                 type: varchar(250)
+                index: true
           triggers:
             - trigger:
                 name: uniq_name_of_trigger
@@ -38,6 +39,7 @@ database:
                 when: for each row
                 proc:
 ```
+See [examples](test/example.yaml) and [template](test/example_template.yaml)
 
 One line of code:
 

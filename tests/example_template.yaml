@@ -1,0 +1,29 @@
+
+database:
+  - schemaName: public
+    tables:
+      # Define a template (won't be created in DB)
+      - table:
+          tableName: base_table
+          template: true  # This is a template
+          columns:
+            - column: { name: id, type: serial, constraint: { primaryKey: true } }
+            - column: { name: created_at, type: timestamp, defaultValue: now() }
+            - column: { name: updated_at, type: timestamp }
+          grant:
+            - all: app_user
+
+      # Use the template
+      - table:
+          tableName: users
+          template: [base_table]  # Inherit from base_table
+          columns:
+            - column: { name: email, type: varchar(255) }
+            - column: { name: name, type: varchar(100) }
+
+      # Cross-schema template reference
+      - table:
+          tableName: orders
+          template: [public.base_table, audit_template]
+          columns:
+            - column: { name: total, type: numeric(10,2) }

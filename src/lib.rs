@@ -12,8 +12,6 @@ use bb8::Pool;
 use bb8_postgres::PostgresConnectionManager;
 
 use lazy_static::lazy_static;
-
-
 use slog::Logger;
 use yaml_rust::YamlLoader;
 use yaml_validator::Validate;
@@ -28,6 +26,8 @@ use self::yaml_rust::Yaml;
 pub mod loader;
 pub mod table;
 pub mod column;
+pub mod index;
+pub mod grant;
 pub mod schema;
 pub mod utils;
 
@@ -46,13 +46,37 @@ pub fn set_logger(logger: Logger) {
 }
 
 #[cfg(feature = "slog")]
-pub(crate) fn log_debug(msg: String) {
+pub(crate) fn log_debug(prefix: &str, msg: &String, file: &str, schema: &String) {
     let log = LOG.read().unwrap();
     if let Some(l) = &*log {
-        debug!(l, "{}", msg);
+        debug!(l, "--{} {}[{}] {}", prefix, file, schema, msg);
     } else {
-        println!("{}", msg);
+        println!("{} {}[{}] {}", prefix, file, schema, msg);
     }
+}
+
+#[derive(Debug, Clone, Default)]
+/// Migration option for column types, indexes, triggers and grant/revoke access.
+/// By default, all false - return exception on potentially destructive changes.
+/// <li> Use without_failfast=true, to log those SQL without execution
+///
+pub struct MigrationOptions {
+    /// if column type identified less than perform alter, size extend will perform anyway, otherwise ignore changes, also see failfast flag
+    /// <li> default: false
+    pub with_size_cut: bool,
+    /// if index change detected, then perform drop before update, otherwise ignore changes, also see failfast flag
+    /// <li> default: false
+    pub with_index_drop: bool,
+    /// if trigger change detected, then perform drop before update, otherwise ignore changes, also see failfast flag
+    /// <li> default: false
+    pub with_trigger_drop: bool,
+    /// if access(grant) change detected, then perform revoke, otherwise ignore changes, also see failfast flag
+    /// <li> default: false
+    pub with_revoke: bool,
+    /// if changes detected AND not set to 'true' for apply, then ignore changes and show generated skipped SQL,
+    /// otherwise return exception (default)
+    /// <li> default: false - return exception if no "with_xxx" and changes detected
+    pub without_failfast: bool,
 }
 
 pub fn get_schema() -> Vec<Yaml> {
@@ -63,9 +87,14 @@ pub fn get_schema() -> Vec<Yaml> {
 //             .max_connections(1)  // use only on init
 //             .connect(c.db_url().as_str()).await
 
-/// simplified migrate
-// pub async fn migrate1(schema: Yaml, db: &mut PooledConnection<'static, PostgresConnectionManager<NoTls>>) -> Result<usize, String> {
+/// Migrate one yaml schema file with options
 pub async fn migrate1(schema: Yaml, db_url: &str) -> Result<usize, String> {
+    migrate_opt(schema, db_url, MigrationOptions::default()).await
+}
+
+// pub async fn migrate1(schema: Yaml, db: &mut PooledConnection<'static, PostgresConnectionManager<NoTls>>) -> Result<usize, String> {
+/// simplified migrate of one yaml file with options
+pub async fn migrate_opt(schema: Yaml, db_url: &str, opt: MigrationOptions) -> Result<usize, String> {
     let config = bb8_postgres::tokio_postgres::config::Config::from_str(db_url)
         .map_err(|e| format!("Parsing DB url: {}", e))?;
     let pg_mgr = PostgresConnectionManager::new(config, bb8_postgres::tokio_postgres::NoTls);
@@ -77,7 +106,7 @@ pub async fn migrate1(schema: Yaml, db_url: &str) -> Result<usize, String> {
     let mut d = db.transaction().await
         .map_err(|e| format!("Starting Transaction: {}", e))?;
 
-    let x = migrate(schema, &mut d, false, None::<&(dyn Fn(Vec<String>) -> Result<(), String> + Send + Sync)>, "").await?;
+    let x = migrate(schema, &mut d, false, None::<&(dyn Fn(Vec<String>) -> Result<(), String> + Send + Sync)>, "", &opt).await?;
 
     let _ = d.commit().await.map_err(|e| format!("Committing Transaction error: {}", e))?;
     Ok(x)
@@ -88,7 +117,8 @@ pub async fn migrate1(schema: Yaml, db_url: &str) -> Result<usize, String> {
 /// return statements to execute
 ///
 pub async fn migrate(schema: Yaml, db: &mut tokio_postgres::Transaction<'_>, retry: bool,
-               dry_run: Option<&(dyn Fn(Vec<String>) -> Result<(), String> + Sync + Send)>, file_name: &str
+               dry_run: Option<&(dyn Fn(Vec<String>) -> Result<(), String> + Sync + Send)>, file_name: &str,
+               opt: &MigrationOptions
 ) -> Result<usize, String> {
     // let mut db = dbc.transaction().map_err(|e| format!("{}", e))?;
     let mut cnt = 0;
@@ -99,7 +129,7 @@ pub async fn migrate(schema: Yaml, db: &mut tokio_postgres::Transaction<'_>, ret
     let mut info = load_info_schema(db_name.as_str(), db).await?;
     let schemas = parse_yaml_schema(schema, file_name)?;
     for s in &schemas.list {
-        cnt += s.deploy_all_tables(&mut info, db, retry, dry_run).await?;
+        cnt += s.deploy_all_tables(&mut info, db, retry, dry_run, opt).await?;
     }
 
     for s in &schemas.list {
@@ -155,6 +185,14 @@ pub fn parse_yaml_schema(yaml: Yaml, file_name: &str) -> Result<OrderedHashMap<S
                     Some(ss) => ss.append(s)?
                 }
             }
+
+            // Resolve templates for all schemas
+            // First pass: collect all schemas for cross-schema template references
+            let schemas_snapshot = schema_schemas.clone();
+            for schema in &mut schema_schemas.list {
+                schema.resolve_templates(&schemas_snapshot)?;
+            }
+
             Ok(schema_schemas)
         }
     }
@@ -164,9 +202,8 @@ pub fn parse_yaml_schema(yaml: Yaml, file_name: &str) -> Result<OrderedHashMap<S
 
 #[cfg(test)]
 mod tests {
-    use crate::{load_schema_from_file, parse_yaml_schema};
+    use crate::{load_schema_from_file, parse_yaml_schema, MigrationOptions};
     #[tokio::test]
-    // #[test]
     async fn test_schema() {
 
         let r = parse_yaml_schema(load_schema_from_file("tests/example.yaml").unwrap(), "").unwrap();
@@ -193,4 +230,12 @@ mod tests {
 
     }
 
+    #[test]
+    fn test_schema_opt() {
+        let m = MigrationOptions::default();
+        assert!(!m.without_failfast);
+        assert!(!m.with_index_drop);
+        assert!(!m.with_revoke);
+        assert!(!m.with_trigger_drop);
+    }
 }
