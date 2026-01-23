@@ -32,15 +32,14 @@ pub struct IndexBuilder {
 
 impl IndexBuilder {
     /// Create a new IndexBuilder by collecting indexes from columns
+    /// - Columns with index name "+" or empty get individual indexes (auto-generated names)
+    /// - Columns with the same explicit index name are combined into a composite index
     pub fn new(columns: &OrderedHashMap<Column>) -> Self {
         let mut index_groups: HashMap<String, DesiredIndex> = HashMap::new();
+        let mut auto_index_counter = 0usize;
 
         for col in &columns.list {
             if let Some(idx) = &col.index {
-                if idx.name.is_empty() {
-                    continue;
-                }
-
                 let col_info = DesiredIndexColumn {
                     column_name: col.name.clone(),
                     order: idx.order.clone(),
@@ -48,22 +47,43 @@ impl IndexBuilder {
                     collate: idx.collate.clone(),
                 };
 
-                match index_groups.get_mut(&idx.name) {
-                    Some(existing) => {
-                        existing.columns.push(col_info);
-                    }
-                    None => {
-                        index_groups.insert(
-                            idx.name.clone(),
-                            DesiredIndex {
-                                name: idx.name.clone(),
-                                columns: vec![col_info],
-                                is_unique: idx.unique.unwrap_or(false)
-                                    || idx.sql.to_uppercase().contains("UNIQUE"),
-                                concurrently: idx.concurrently.unwrap_or(false),
-                                using: idx.using.clone(),
-                            },
-                        );
+                // Check if this is an auto-generated index (empty name or "+")
+                let is_auto_index = idx.name.is_empty() || idx.name == "+";
+
+                if is_auto_index {
+                    // Create individual index for this column with unique key
+                    auto_index_counter += 1;
+                    let auto_key = format!("__auto_{}_{}", col.name, auto_index_counter);
+                    index_groups.insert(
+                        auto_key,
+                        DesiredIndex {
+                            name: "+".to_string(), // Will be auto-generated in generate_sql
+                            columns: vec![col_info],
+                            is_unique: idx.unique.unwrap_or(false)
+                                || idx.sql.to_uppercase().contains("UNIQUE"),
+                            concurrently: idx.concurrently.unwrap_or(false),
+                            using: idx.using.clone(),
+                        },
+                    );
+                } else {
+                    // Explicit index name - combine columns with same name
+                    match index_groups.get_mut(&idx.name) {
+                        Some(existing) => {
+                            existing.columns.push(col_info);
+                        }
+                        None => {
+                            index_groups.insert(
+                                idx.name.clone(),
+                                DesiredIndex {
+                                    name: idx.name.clone(),
+                                    columns: vec![col_info],
+                                    is_unique: idx.unique.unwrap_or(false)
+                                        || idx.sql.to_uppercase().contains("UNIQUE"),
+                                    concurrently: idx.concurrently.unwrap_or(false),
+                                    using: idx.using.clone(),
+                                },
+                            );
+                        }
                     }
                 }
             }

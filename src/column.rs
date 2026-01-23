@@ -132,6 +132,9 @@ impl Column {
         };
         let index = &input["index"];
         // Parse index: can be boolean (true = default index) or object (full config)
+        // - index: true → create index with auto-generated name
+        // - index: { name: "+" } or { name: "my_idx" } → create index
+        // - index: false, index: {}, or not present → no index
         let index = if index.is_null() {
             None
         } else if let Some(b) = index.as_bool() {
@@ -141,7 +144,7 @@ impl Column {
                 None // index: false means no index
             }
         } else {
-            Some(Index::new(index)) // index: { ... } full object config
+            Index::new(index) // index: { ... } returns Some only if name is set
         };
 
         Column {
@@ -295,13 +298,16 @@ impl Default for Index {
 }
 
 impl Index {
-    pub(crate) fn new(input: &Yaml) -> Self {
+    pub(crate) fn new(input: &Yaml) -> Option<Self> {
+        let name = crate::utils::as_str_esc(input, "name");
+        // If name is empty, no index is created (must explicitly set name or use index: true)
+        if name.is_empty() {
+            return None;
+        }
         let unique_val = crate::utils::as_bool(input, "unique", false);
         let concurrently_val = crate::utils::as_bool(input, "concurrently", false);
-        let name = crate::utils::as_str_esc(input, "name");
-        Index {
-            // If name is empty, use "+" for auto-generated name
-            name: if name.is_empty() { "+".to_string() } else { name },
+        Some(Index {
+            name,
             unique: if unique_val { Some(true) } else { None },
             concurrently: if concurrently_val { Some(true) } else { None },
             using: crate::utils::as_str_esc(input, "using").to_lowercase(),
@@ -309,6 +315,6 @@ impl Index {
             nulls: crate::utils::as_str_esc(input, "nulls").to_uppercase(),
             collate: crate::utils::as_str_esc(input, "collate"),
             sql: crate::utils::as_str_esc(input, "sql"),
-        }
+        })
     }
 }
