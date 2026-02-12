@@ -12,6 +12,9 @@ use bb8::Pool;
 use bb8_postgres::PostgresConnectionManager;
 
 use lazy_static::lazy_static;
+use postgres::Client;
+
+
 use slog::Logger;
 use yaml_rust::YamlLoader;
 use yaml_validator::Validate;
@@ -83,35 +86,11 @@ pub fn get_schema() -> Vec<Yaml> {
     SCHEMA_YAMLS.clone()
 }
 
-//         let pool = PgPoolOptions::new()
-//             .max_connections(1)  // use only on init
-//             .connect(c.db_url().as_str()).await
 
 /// Migrate one yaml schema file with options
 pub async fn migrate1(schema: Yaml, db_url: &str) -> Result<usize, String> {
     migrate_opt(schema, db_url, MigrationOptions::default()).await
 }
-
-// pub async fn migrate1(schema: Yaml, db: &mut PooledConnection<'static, PostgresConnectionManager<NoTls>>) -> Result<usize, String> {
-/// simplified migrate of one yaml file with options
-pub async fn migrate_opt(schema: Yaml, db_url: &str, opt: MigrationOptions) -> Result<usize, String> {
-    let config = bb8_postgres::tokio_postgres::config::Config::from_str(db_url)
-        .map_err(|e| format!("Parsing DB url: {}", e))?;
-    let pg_mgr = PostgresConnectionManager::new(config, bb8_postgres::tokio_postgres::NoTls);
-    let pool = Pool::builder().connection_timeout(Duration::from_secs(1))
-        .build(pg_mgr).await
-        .map_err(|e| format!("Connecting error: {}", e))?;
-    let mut db = pool.get().await
-        .map_err(|e| format!("Getting connection from the pool to start a transaction: {}", e))?;
-    let mut d = db.transaction().await
-        .map_err(|e| format!("Starting Transaction: {}", e))?;
-
-    let x = migrate(schema, &mut d, false, None::<&(dyn Fn(Vec<String>) -> Result<(), String> + Send + Sync)>, "", &opt).await?;
-
-    let _ = d.commit().await.map_err(|e| format!("Committing Transaction error: {}", e))?;
-    Ok(x)
-}
-
 
 /// main entry point to apply schema from yaml to the database
 /// return statements to execute
