@@ -1,9 +1,9 @@
-extern crate postgres;
+// extern crate postgres;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::result::Result;
 
-use postgres::Transaction;
+// use postgres::Transaction;
 use serde::Serialize;
 
 use crate::utils::{Named, OrderedHashMap};
@@ -43,12 +43,25 @@ pub struct PgTable {
     pub columns: HashMap<String, PgColumnDfn>,
     /// column name, foreign schema, table, column, fk name
     pub fks: HashMap<String, FKTable>,
-    /// trigger name, trigger's schema
-    pub triggers: HashMap<String, String>,
+    /// trigger name -> PgTrigger
+    pub triggers: HashMap<String, PgTrigger>,
+    /// index name -> PgIndex
+    pub indexes: HashMap<String, PgIndex>,
+    /// grantee -> PgGrant
+    pub grants: HashMap<String, PgGrant>,
+    /// Primary key columns in order, with constraint name
+    pub primary_key: Option<PgPrimaryKey>,
     pub sort_order: usize,
     pub table_comment: Option<String>,
     pub owner: Option<String>,
-    // pub grant: HashMap<String, String>,
+}
+
+/// Primary key information loaded from DB
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct PgPrimaryKey {
+    pub constraint_name: String,
+    /// Column names in order
+    pub columns: Vec<String>,
 }
 
 const _PRIVILEGES: [&str; 14] = [
@@ -91,6 +104,41 @@ pub struct FKTable {
     pub column: HashSet<String>,
     pub name: String,
     pub sql: String,
+}
+
+/// Index column information loaded from DB
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct PgIndexColumn {
+    pub column_name: String,
+    pub order: String,        // ASC or DESC
+    pub nulls: String,        // FIRST or LAST
+    pub collation: String,    // collation name or empty
+}
+
+/// Index information loaded from DB
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct PgIndex {
+    pub index_name: String,
+    pub columns: Vec<PgIndexColumn>,
+    pub is_unique: bool,
+    pub index_method: String,  // btree, hash, gist, etc.
+}
+
+/// Trigger information loaded from DB
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct PgTrigger {
+    pub trigger_name: String,
+    pub event: String,         // BEFORE INSERT, AFTER UPDATE, etc.
+    pub orientation: String,   // FOR EACH ROW, FOR EACH STATEMENT
+    pub proc: String,          // function name with schema
+}
+
+/// Grant information loaded from DB
+#[derive(Debug, Clone, Serialize, PartialEq, Default)]
+pub struct PgGrant {
+    pub grantee: String,
+    pub privileges: HashSet<String>,  // SELECT, INSERT, UPDATE, DELETE, etc.
+    pub with_grant_option: bool,
 }
 
 impl FKTable {
@@ -156,12 +204,13 @@ pub fn load_info_schema(db_name: &str, db: &mut Transaction) -> Result<InfoSchem
 
 // SELECT table_catalog, table_schema, table_name, column_name, column_default, is_nullable, data_type, udt_name, character_maximum_length, numeric_precision, numeric_scale, ordinal_position from information_schema.columns where table_schema not in ('pg_catalog', 'information_schema') and table_name = table_catalog = $1
 #[inline]
-fn load_info_cc(db_name: &str, db: &mut Transaction) -> Result<InfoSchemaType, String> {
+async fn load_info_cc(db_name: &str, db: &mut tokio_postgres::Transaction<'_>) -> Result<InfoSchemaType, String> {
     let mut data: InfoSchemaType = Default::default();
     let result = db.query("SELECT table_catalog, table_schema, table_name, column_name, column_default, is_nullable, \
     data_type, udt_name, character_maximum_length, numeric_precision, numeric_scale, ordinal_position \
      from information_schema.columns where table_schema not in ('pg_catalog', 'information_schema') and table_catalog = $1 \
       order by 1,2,3, ordinal_position", &[&db_name])
+        .await
         .map_err(|e| format!("on loading information_schema [{}]: {}", db_name, e))?;
     let mut sort_order = 0;
     for r in result {
@@ -236,7 +285,7 @@ fn load_info_cc(db_name: &str, db: &mut Transaction) -> Result<InfoSchemaType, S
     FROM information_schema.tables tabs
     WHERE tabs.table_schema not in ('pg_catalog', 'information_schema') AND tabs.table_catalog = $1
      and tabs.table_name in ({})
-    ) as ist WHERE ist.table_comment is not null order by 1,2", tables).as_str(), &[&db_name])
+    ) as ist WHERE ist.table_comment is not null order by 1,2", tables).as_str(), &[&db_name]).await
                 .map_err(|e| format!("on loading table_comment from information_schema [{}]: {}", db_name, e))?;
             for r in result {
                 // let table_schema: &str = r.get(0);
@@ -248,7 +297,7 @@ fn load_info_cc(db_name: &str, db: &mut Transaction) -> Result<InfoSchemaType, S
             }
 
             let result = db.query("SELECT schemaname, tablename, tableowner from pg_tables where schemaname = $1 ",
-                                  &[&schema])
+                                  &[&schema]).await
                 .map_err(|e| format!("on loading table_owner from information_schema [{}]: {}", db_name, e))?;
             for r in result {
                 // let table_schema: &str = r.get(0);
@@ -264,7 +313,7 @@ fn load_info_cc(db_name: &str, db: &mut Transaction) -> Result<InfoSchemaType, S
 FROM information_schema.columns cols
 WHERE cols.table_schema not in ('pg_catalog', 'information_schema')  AND cols.table_catalog = $1
  AND cols.table_name in ({})
-) as iss where iss.column_comment is not null", tables).as_str(), &[&db_name])
+) as iss where iss.column_comment is not null", tables).as_str(), &[&db_name]).await
                 .map_err(|e| format!("on loading table_comment from information_schema [{}]: {}", db_name, e))?;
             for r in result {
                 // let table_schema: &str = r.get(0);
@@ -282,7 +331,7 @@ WHERE cols.table_schema not in ('pg_catalog', 'information_schema')  AND cols.ta
                     FROM pg_index i
                     JOIN pg_class pc on pc.oid = i.indrelid
                     JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
-                    WHERE (i.indisprimary or i.indisunique) and i.indrelid in ({})", query).as_str(), &[])
+                    WHERE (i.indisprimary or i.indisunique) and i.indrelid in ({})", query).as_str(), &[]).await
                 .map_err(|e| format!("on loading information_schema pk/uniq: {}", e))?;
             for r in result {
                 let table_name: &str = r.get(0);
@@ -323,43 +372,57 @@ WHERE cols.table_schema not in ('pg_catalog', 'information_schema')  AND cols.ta
 }
 
 #[inline]
-fn load_info_tg(db_name: &str, db: &mut Transaction, data: &mut InfoSchemaType) -> Result<(), String> {
-    match db.query("SELECT trigger_catalog, trigger_schema, trigger_name, event_object_catalog, event_object_schema, event_object_table \
-        from information_schema.triggers where event_object_schema not in ('pg_catalog', 'information_schema') and trigger_catalog = $1 \
-        order by created", &[&db_name]) {
-        Err(e) => Err(format!("on loading information_schema.triggers: {}", e)),
-        Ok(result) => {
-            let mut sort_order = 0;
-            for r in result {
-                sort_order += 1;
-                let trigger_catalog: &str = r.get(0);
-                let trigger_schema: &str = r.get(1);
-                let trigger_name: &str = r.get(2);
-                let event_object_catalog: &str = r.get(3);
-                let event_object_schema: &str = r.get(4);
-                let event_object_table: &str = r.get(5);
-                let trigger_data = format!("{} {} {}", trigger_catalog, trigger_schema, event_object_catalog);
-                match data.get_mut(event_object_schema) {
-                    None => {
-                        let mut hd = HashMap::new();
-                        hd.insert(event_object_table.into(), PgTable::newt(event_object_table, trigger_name, trigger_data, sort_order));
-                        data.insert(event_object_schema.into(), hd);
-                    }
-                    Some(s) => {
-                        match s.get_mut(event_object_table) {
-                            None => {
-                                s.insert(event_object_table.into(), PgTable::newt(event_object_table, trigger_name, trigger_data, sort_order));
-                            }
-                            Some(hd) => {
-                                hd.triggers.insert(trigger_name.into(), trigger_data);
-                            }
-                        }
-                    }
-                }
+async fn load_info_tg(_db_name: &str, db: &mut tokio_postgres::Transaction<'_>, data: &mut InfoSchemaType) -> Result<(), String> {
+    // Query triggers with full details from pg_trigger
+    let result = db.query(
+        "SELECT
+            n.nspname as schema_name,
+            c.relname as table_name,
+            t.tgname as trigger_name,
+            CASE
+                WHEN t.tgtype & 2 = 2 THEN 'BEFORE'
+                WHEN t.tgtype & 64 = 64 THEN 'INSTEAD OF'
+                ELSE 'AFTER'
+            END ||
+            CASE WHEN t.tgtype & 4 = 4 THEN ' INSERT' ELSE '' END ||
+            CASE WHEN t.tgtype & 8 = 8 THEN ' DELETE' ELSE '' END ||
+            CASE WHEN t.tgtype & 16 = 16 THEN ' UPDATE' ELSE '' END ||
+            CASE WHEN t.tgtype & 32 = 32 THEN ' TRUNCATE' ELSE '' END as event,
+            CASE WHEN t.tgtype & 1 = 1 THEN 'FOR EACH ROW' ELSE 'FOR EACH STATEMENT' END as orientation,
+            pn.nspname || '.' || p.proname || '()' as proc_name
+         FROM pg_trigger t
+         JOIN pg_class c ON c.oid = t.tgrelid
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+         JOIN pg_proc p ON p.oid = t.tgfoid
+         JOIN pg_namespace pn ON pn.oid = p.pronamespace
+         WHERE NOT t.tgisinternal
+           AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+         ORDER BY n.nspname, c.relname, t.tgname",
+        &[]
+    ).await.map_err(|e| format!("on loading pg_trigger: {}", e))?;
+
+    for r in result {
+        let schema_name: &str = r.get(0);
+        let table_name: &str = r.get(1);
+        let trigger_name: &str = r.get(2);
+        let event: &str = r.get(3);
+        let orientation: &str = r.get(4);
+        let proc_name: &str = r.get(5);
+
+        let trigger = PgTrigger {
+            trigger_name: trigger_name.to_string(),
+            event: event.trim().to_string(),
+            orientation: orientation.to_string(),
+            proc: proc_name.to_string(),
+        };
+
+        if let Some(schema_tables) = data.get_mut(schema_name) {
+            if let Some(table) = schema_tables.get_mut(table_name) {
+                table.triggers.insert(trigger_name.to_string(), trigger);
             }
-            Ok(())
         }
     }
+    Ok(())
 }
 
 const NO_ACTION: &str = "NO ACTION";
@@ -367,7 +430,7 @@ const NO_ACTION: &str = "NO ACTION";
 #[inline]
 // db: &mut Transaction,
 // db: &mut Client
-fn load_info_fk(db_name: &str, db: &mut Transaction, data: &mut InfoSchemaType) -> Result<(), String> {
+async fn load_info_fk(db_name: &str, db: &mut tokio_postgres::Transaction<'_>, data: &mut InfoSchemaType) -> Result<(), String> {
     match db.query("SELECT tc.table_schema,  tc.table_name, kcu.column_name,
  ccu.table_schema AS foreign_schema_name, ccu.table_name AS foreign_table_name, ccu.column_name AS foreign_column_name, tc.constraint_name,
  rc.match_option, rc.update_rule, rc.delete_rule
@@ -375,7 +438,7 @@ fn load_info_fk(db_name: &str, db: &mut Transaction, data: &mut InfoSchemaType) 
  JOIN information_schema.key_column_usage AS kcu ON tc.constraint_name = kcu.constraint_name
  JOIN information_schema.constraint_column_usage AS ccu ON ccu.constraint_name = tc.constraint_name
  join information_schema.referential_constraints as rc on tc.constraint_name = rc.constraint_name
- WHERE constraint_type = 'FOREIGN KEY' and tc.table_catalog = $1", &[&db_name]) {
+ WHERE constraint_type = 'FOREIGN KEY' and tc.table_catalog = $1", &[&db_name]).await {
         Err(e) => Err(format!("on loading information_schema.fk: {}", e)),
         Ok(result) => {
             for r in result {
@@ -428,9 +491,228 @@ fn load_info_fk(db_name: &str, db: &mut Transaction, data: &mut InfoSchemaType) 
 }
 
 #[inline]
-pub fn load_info_schema_owner(db_name: &str, db: &mut Transaction) -> Result<InfoSchemaOwnerType, String> {
+async fn load_info_idx(_db_name: &str, db: &mut tokio_postgres::Transaction<'_>, data: &mut InfoSchemaType) -> Result<(), String> {
+    // Query indexes with detailed column information from pg_index
+    let result = db.query(
+        "SELECT
+            n.nspname as schema_name,
+            t.relname as table_name,
+            i.relname as index_name,
+            ix.indisunique as is_unique,
+            ix.indisprimary as is_primary,
+            am.amname as index_method,
+            a.attname as column_name,
+            CASE WHEN ix.indoption[array_position(ix.indkey, a.attnum) - 1] & 1 = 1 THEN 'DESC' ELSE 'ASC' END as sort_order,
+            CASE
+                WHEN ix.indoption[array_position(ix.indkey, a.attnum) - 1] & 2 = 2 THEN 'FIRST'
+                ELSE 'LAST'
+            END as nulls_order,
+            COALESCE(coll.collname, '') as collation,
+            array_position(ix.indkey, a.attnum) as col_position
+         FROM pg_index ix
+         JOIN pg_class i ON i.oid = ix.indexrelid
+         JOIN pg_class t ON t.oid = ix.indrelid
+         JOIN pg_namespace n ON n.oid = t.relnamespace
+         JOIN pg_am am ON am.oid = i.relam
+         JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
+         LEFT JOIN pg_collation coll ON coll.oid = ANY(ix.indcollation)
+            AND array_position(ix.indcollation, coll.oid) = array_position(ix.indkey, a.attnum)
+         WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+         ORDER BY n.nspname, t.relname, i.relname, array_position(ix.indkey, a.attnum)",
+        &[]
+    ).await.map_err(|e| format!("on loading pg_indexes: {}", e))?;
+
+    // Group results by index
+    let mut current_index: Option<(String, String, String, PgIndex)> = None;
+
+    for r in result {
+        let schema_name: &str = r.get(0);
+        let table_name: &str = r.get(1);
+        let index_name: &str = r.get(2);
+        let is_unique: bool = r.get(3);
+        let is_primary: bool = r.get(4);
+        let index_method: &str = r.get(5);
+        let column_name: &str = r.get(6);
+        let sort_order: &str = r.get(7);
+        let nulls_order: &str = r.get(8);
+        let collation: &str = r.get(9);
+
+        // Skip primary key indexes as they are handled separately
+        if is_primary {
+            continue;
+        }
+
+        let col_info = PgIndexColumn {
+            column_name: column_name.to_string(),
+            order: sort_order.to_string(),
+            nulls: nulls_order.to_string(),
+            collation: collation.to_string(),
+        };
+
+        match &mut current_index {
+            Some((cur_schema, cur_table, cur_idx_name, idx))
+                if cur_schema == schema_name && cur_table == table_name && cur_idx_name == index_name =>
+            {
+                // Same index, add column
+                idx.columns.push(col_info);
+            }
+            _ => {
+                // Save previous index if exists
+                if let Some((prev_schema, prev_table, _, prev_idx)) = current_index.take() {
+                    if let Some(schema_tables) = data.get_mut(&prev_schema) {
+                        if let Some(table) = schema_tables.get_mut(&prev_table) {
+                            table.indexes.insert(prev_idx.index_name.clone(), prev_idx);
+                        }
+                    }
+                }
+                // Start new index
+                current_index = Some((
+                    schema_name.to_string(),
+                    table_name.to_string(),
+                    index_name.to_string(),
+                    PgIndex {
+                        index_name: index_name.to_string(),
+                        columns: vec![col_info],
+                        is_unique,
+                        index_method: index_method.to_string(),
+                    },
+                ));
+            }
+        }
+    }
+
+    // Save last index
+    if let Some((prev_schema, prev_table, _, prev_idx)) = current_index {
+        if let Some(schema_tables) = data.get_mut(&prev_schema) {
+            if let Some(table) = schema_tables.get_mut(&prev_table) {
+                table.indexes.insert(prev_idx.index_name.clone(), prev_idx);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[inline]
+async fn load_info_pk(db: &mut tokio_postgres::Transaction<'_>, data: &mut InfoSchemaType) -> Result<(), String> {
+    // Query primary keys with column order from pg_constraint
+    let result = db.query(
+        "SELECT
+            n.nspname as schema_name,
+            t.relname as table_name,
+            c.conname as constraint_name,
+            a.attname as column_name,
+            array_position(c.conkey, a.attnum) as col_position
+         FROM pg_constraint c
+         JOIN pg_class t ON t.oid = c.conrelid
+         JOIN pg_namespace n ON n.oid = t.relnamespace
+         JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(c.conkey)
+         WHERE c.contype = 'p'
+           AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+         ORDER BY n.nspname, t.relname, array_position(c.conkey, a.attnum)",
+        &[]
+    ).await.map_err(|e| format!("on loading primary keys: {}", e))?;
+
+    // Group results by table
+    let mut current_pk: Option<(String, String, String, Vec<String>)> = None; // schema, table, constraint_name, columns
+
+    for r in result {
+        let schema_name: &str = r.get(0);
+        let table_name: &str = r.get(1);
+        let constraint_name: &str = r.get(2);
+        let column_name: &str = r.get(3);
+
+        match &mut current_pk {
+            Some((cur_schema, cur_table, _, columns))
+                if cur_schema == schema_name && cur_table == table_name =>
+            {
+                // Same table, add column
+                columns.push(column_name.to_string());
+            }
+            _ => {
+                // Save previous PK if exists
+                if let Some((prev_schema, prev_table, prev_constraint, prev_columns)) = current_pk.take() {
+                    if let Some(schema_tables) = data.get_mut(&prev_schema) {
+                        if let Some(table) = schema_tables.get_mut(&prev_table) {
+                            table.primary_key = Some(PgPrimaryKey {
+                                constraint_name: prev_constraint,
+                                columns: prev_columns,
+                            });
+                        }
+                    }
+                }
+                // Start new PK
+                current_pk = Some((
+                    schema_name.to_string(),
+                    table_name.to_string(),
+                    constraint_name.to_string(),
+                    vec![column_name.to_string()],
+                ));
+            }
+        }
+    }
+
+    // Save last PK
+    if let Some((prev_schema, prev_table, prev_constraint, prev_columns)) = current_pk {
+        if let Some(schema_tables) = data.get_mut(&prev_schema) {
+            if let Some(table) = schema_tables.get_mut(&prev_table) {
+                table.primary_key = Some(PgPrimaryKey {
+                    constraint_name: prev_constraint,
+                    columns: prev_columns,
+                });
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[inline]
+async fn load_info_grant(_db_name: &str, db: &mut tokio_postgres::Transaction<'_>, data: &mut InfoSchemaType) -> Result<(), String> {
+    // Query table grants from information_schema
+    let result = db.query(
+        "SELECT
+            table_schema,
+            table_name,
+            grantee,
+            privilege_type,
+            is_grantable
+         FROM information_schema.table_privileges
+         WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
+           AND grantor != grantee
+         ORDER BY table_schema, table_name, grantee",
+        &[]
+    ).await.map_err(|e| format!("on loading table_privileges: {}", e))?;
+
+    for r in result {
+        let schema_name: &str = r.get(0);
+        let table_name: &str = r.get(1);
+        let grantee: &str = r.get(2);
+        let privilege_type: &str = r.get(3);
+        let is_grantable: &str = r.get(4);
+
+        if let Some(schema_tables) = data.get_mut(schema_name) {
+            if let Some(table) = schema_tables.get_mut(table_name) {
+                let grant = table.grants.entry(grantee.to_string()).or_insert_with(|| PgGrant {
+                    grantee: grantee.to_string(),
+                    privileges: HashSet::new(),
+                    with_grant_option: false,
+                });
+                grant.privileges.insert(privilege_type.to_string());
+                if is_grantable == "YES" {
+                    grant.with_grant_option = true;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[inline]
+pub async fn load_info_schema_owner(db_name: &str, db: &mut tokio_postgres::Transaction<'_>) -> Result<InfoSchemaOwnerType, String> {
     let mut res = HashMap::new();
-    match db.query("select schema_name, schema_owner from information_schema.schemata where schema_name not in ('information_schema', 'pg_catalog')", &[]) {
+    match db.query("select schema_name, schema_owner from information_schema.schemata where schema_name not in ('information_schema', 'pg_catalog')",
+                   &[]).await {
         Ok(schemas) => {
             for schema in schemas {
                 let schema_name: &str = schema.get(0);
@@ -440,7 +722,7 @@ pub fn load_info_schema_owner(db_name: &str, db: &mut Transaction) -> Result<Inf
 from information_schema.tables t
 join pg_catalog.pg_class c on (t.table_name = c.relname)
 join pg_catalog.pg_user u on (c.relowner = u.usesysid)
-where t.table_schema = $1 and t.table_catalog = $2 ", &[&schema_name, &db_name]) {
+where t.table_schema = $1 and t.table_catalog = $2 ", &[&schema_name, &db_name]).await {
                     Err(e) => { return Err(format!("on loading information_schema.owner: {}", e)); }
                     Ok(result) => {
                         for r in result {
@@ -465,6 +747,9 @@ impl Default for PgTable {
             columns: Default::default(),
             fks: Default::default(),
             triggers: Default::default(),
+            indexes: Default::default(),
+            grants: Default::default(),
+            primary_key: None,
             sort_order: 0,
             table_comment: None,
             owner: None,
@@ -486,11 +771,17 @@ impl PgTable {
         }
     }
 
-    /// should not called
+    /// should not be called - kept for backward compatibility
     #[inline]
-    fn newt(table: &str, trig: &str, trig_data: String, sort_order: usize) -> Self {
+    #[allow(dead_code)]
+    fn newt(table: &str, trig_name: &str, event: &str, orientation: &str, proc: &str, sort_order: usize) -> Self {
         let mut tgs = HashMap::new();
-        tgs.insert(trig.into(), trig_data);
+        tgs.insert(trig_name.into(), PgTrigger {
+            trigger_name: trig_name.to_string(),
+            event: event.to_string(),
+            orientation: orientation.to_string(),
+            proc: proc.to_string(),
+        });
         PgTable {
             table_name: table.into(),
             triggers: tgs,

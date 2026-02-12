@@ -5,7 +5,11 @@ extern crate yaml_rust;
 use std::convert::TryFrom;
 use std::fs;
 use std::result::Result;
+use std::str::FromStr;
 use std::sync::{Arc, RwLock};
+use std::time::Duration;
+use bb8::Pool;
+use bb8_postgres::PostgresConnectionManager;
 
 use lazy_static::lazy_static;
 use postgres::Client;
@@ -25,6 +29,8 @@ use self::yaml_rust::Yaml;
 pub mod loader;
 pub mod table;
 pub mod column;
+pub mod index;
+pub mod grant;
 pub mod schema;
 pub mod utils;
 
@@ -43,13 +49,37 @@ pub fn set_logger(logger: Logger) {
 }
 
 #[cfg(feature = "slog")]
-pub(crate) fn log_debug(msg: String) {
+pub(crate) fn log_debug(prefix: &str, msg: &String, file: &str, schema: &String) {
     let log = LOG.read().unwrap();
     if let Some(l) = &*log {
-        debug!(l, "{}", msg);
+        debug!(l, "--{} {}[{}] {}", prefix, file, schema, msg);
     } else {
-        println!("{}", msg);
+        println!("{} {}[{}] {}", prefix, file, schema, msg);
     }
+}
+
+#[derive(Debug, Clone, Default)]
+/// Migration option for column types, indexes, triggers and grant/revoke access.
+/// By default, all false - return exception on potentially destructive changes.
+/// <li> Use without_failfast=true, to log those SQL without execution
+///
+pub struct MigrationOptions {
+    /// if column type identified less than perform alter, size extend will perform anyway, otherwise ignore changes, also see failfast flag
+    /// <li> default: false
+    pub with_size_cut: bool,
+    /// if index change detected, then perform drop before update, otherwise ignore changes, also see failfast flag
+    /// <li> default: false
+    pub with_index_drop: bool,
+    /// if trigger change detected, then perform drop before update, otherwise ignore changes, also see failfast flag
+    /// <li> default: false
+    pub with_trigger_drop: bool,
+    /// if access(grant) change detected, then perform revoke, otherwise ignore changes, also see failfast flag
+    /// <li> default: false
+    pub with_revoke: bool,
+    /// if changes detected AND not set to 'true' for apply, then ignore changes and show generated skipped SQL,
+    /// otherwise return exception (default)
+    /// <li> default: false - return exception if no "with_xxx" and changes detected
+    pub without_failfast: bool,
 }
 
 pub fn get_schema() -> Vec<Yaml> {
@@ -57,34 +87,35 @@ pub fn get_schema() -> Vec<Yaml> {
 }
 
 
-/// simplified migrate
-pub fn migrate1(schema: Yaml, db: &mut Client) -> Result<usize, String> {
-    migrate(schema, db, false, None::<&dyn Fn(Vec<String>) -> Result<(), String>>, "")
+/// Migrate one yaml schema file with options
+pub async fn migrate1(schema: Yaml, db_url: &str) -> Result<usize, String> {
+    migrate_opt(schema, db_url, MigrationOptions::default()).await
 }
 
 /// main entry point to apply schema from yaml to the database
 /// return statements to execute
 ///
-pub fn migrate(schema: Yaml, dbc: &mut Client, retry: bool,
-               dry_run: Option<&dyn Fn(Vec<String>) -> Result<(), String>>, file_name: &str
+pub async fn migrate(schema: Yaml, db: &mut tokio_postgres::Transaction<'_>, retry: bool,
+               dry_run: Option<&(dyn Fn(Vec<String>) -> Result<(), String> + Sync + Send)>, file_name: &str,
+               opt: &MigrationOptions
 ) -> Result<usize, String> {
-    let mut db = dbc.transaction().map_err(|e| format!("{}", e))?;
+    // let mut db = dbc.transaction().map_err(|e| format!("{}", e))?;
     let mut cnt = 0;
     // check db connection
     let db_name: String = db.query("select current_database()", &[])
-        .map_err(|e| format!("DB connection error: {}", e))?[0].get(0);
+        .await.map_err(|e| format!("DB connection error: {}", e))?[0].get(0);
     // load schema
-    let mut info = load_info_schema(db_name.as_str(), &mut db)?;
+    let mut info = load_info_schema(db_name.as_str(), db).await?;
     let schemas = parse_yaml_schema(schema, file_name)?;
     for s in &schemas.list {
-        cnt += s.deploy_all_tables(&mut info, &mut db, retry, dry_run)?;
+        cnt += s.deploy_all_tables(&mut info, db, retry, dry_run, opt).await?;
     }
 
     for s in &schemas.list {
-        cnt += s.deploy_all_fk(&schemas, &mut info, &mut db, retry, dry_run)?;
+        cnt += s.deploy_all_fk(&schemas, &mut info, db, retry, dry_run).await?;
     }
 
-    let _ = db.commit().map_err(|e| format!("committing error: {}", e))?;
+    // let _ = db.commit().map_err(|e| format!("committing error: {}", e))?;
     Ok(cnt)
 }
 
@@ -133,6 +164,14 @@ pub fn parse_yaml_schema(yaml: Yaml, file_name: &str) -> Result<OrderedHashMap<S
                     Some(ss) => ss.append(s)?
                 }
             }
+
+            // Resolve templates for all schemas
+            // First pass: collect all schemas for cross-schema template references
+            let schemas_snapshot = schema_schemas.clone();
+            for schema in &mut schema_schemas.list {
+                schema.resolve_templates(&schemas_snapshot)?;
+            }
+
             Ok(schema_schemas)
         }
     }
@@ -142,10 +181,9 @@ pub fn parse_yaml_schema(yaml: Yaml, file_name: &str) -> Result<OrderedHashMap<S
 
 #[cfg(test)]
 mod tests {
-    use crate::{load_schema_from_file, parse_yaml_schema};
-
-    #[test]
-    fn test_schema() {
+    use crate::{load_schema_from_file, parse_yaml_schema, MigrationOptions};
+    #[tokio::test]
+    async fn test_schema() {
 
         let r = parse_yaml_schema(load_schema_from_file("tests/example.yaml").unwrap(), "").unwrap();
         assert_eq!(r.len(), 1);
@@ -171,4 +209,12 @@ mod tests {
 
     }
 
+    #[test]
+    fn test_schema_opt() {
+        let m = MigrationOptions::default();
+        assert!(!m.without_failfast);
+        assert!(!m.with_index_drop);
+        assert!(!m.with_revoke);
+        assert!(!m.with_trigger_drop);
+    }
 }

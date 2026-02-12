@@ -114,13 +114,36 @@ schema:
                 sql:
                   type: string
         index:
-          type: object
-          items:
-            name:
-              # if multiple columns having same index name, then the single index will be created for the set of those columns
-              type: string
-            sql:
-              type: string
+          oneOf:
+            # simple index on a column
+            - type: boolean
+            - type: object
+              items:
+                name:
+                  # if multiple columns having same index name, then the single index will be created for the set of those columns
+                  # if name is just a "+" or not set, than generate a default index name
+                  type: string
+                unique:
+                  # create UNIQUE index
+                  type: boolean
+                concurrently:
+                  # create index CONCURRENTLY (non-blocking)
+                  type: boolean
+                using:
+                  # index method: btree, hash, gist, spgist, gin, brin
+                  type: string
+                order:
+                  # ASC or DESC
+                  type: string
+                nulls:
+                  # FIRST or LAST (NULLS FIRST / NULLS LAST)
+                  type: string
+                collate:
+                  # collation name for the index
+                  type: string
+                sql:
+                  # additional SQL (appended to index creation, prefer specific fields, ignored on index changes)
+                  type: string
         description:
           type: string
         sql:
@@ -200,7 +223,7 @@ schema:
           type: array
           items:
             $ref: grant
-        template: # hold for future usage
+        template:
           oneOf:
             #  this table will not create
             - type: boolean

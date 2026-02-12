@@ -1,13 +1,13 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
-use postgres::Transaction;
 use serde::Serialize;
 use yaml_rust::Yaml;
 use yaml_rust::yaml::Array;
 
 use crate::column::{Column, Trig};
 use crate::loader::{FKTable, InfoSchemaType, PgTable};
+use crate::MigrationOptions;
 #[cfg(feature = "slog")]
 use crate::log_debug;
 use crate::schema::Schema;
@@ -44,6 +44,16 @@ pub struct Table {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub grant: Vec<YGrant>,
 
+    /// Template configuration:
+    /// - None: regular table, no template inheritance
+    /// - Some(true): this table IS a template (won't be created in DB)
+    /// - Some(false): regular table (same as None)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_template: Option<bool>,
+
+    /// List of template names to inherit from (format: "schema.table" or just "table" for same schema)
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub use_templates: Vec<String>,
 }
 
 
@@ -160,6 +170,8 @@ impl Default for Table {
             data: vec![],
             owner: "".to_string(),
             grant: vec![],
+            is_template: None,
+            use_templates: vec![],
         }
     }
 }
@@ -179,18 +191,6 @@ impl Table {
                 if !c.is_null() {
                     if let Some(_name) = c["name"].as_str() {
                         let yc = Column::new(c);
-                        /*
-                        match file {
-                            None => {
-                                // println!("{}:\n{:?}\n{:?}", _name, yc, c);
-                            }
-                            Some(_f) => {
-                                if let Some(log) = log {
-                                    trace!(log, "+\n{:?}\n{:?}", yc, c);
-                                }
-                            }
-                        }
-                         */
                         if let Err(e) = columns.append(yc) {
                             return Err(format!(
                                 "{} (column name) {}/{} on table: {}{}{}",
@@ -241,6 +241,22 @@ impl Table {
             }
         }
         let etl = &input["data_file"];
+        // Parse template field - can be boolean or array of strings
+        let template_field = &input["template"];
+        let (is_template, use_templates) = if template_field.is_null() {
+            (None, vec![])
+        } else if let Some(b) = template_field.as_bool() {
+            (Some(b), vec![])
+        } else if let Some(arr) = template_field.as_vec() {
+            let templates: Vec<String> = arr
+                .iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect();
+            (None, templates)
+        } else {
+            (None, vec![])
+        };
+
         Ok(Table {
             table_name: table_name.into(),
             description: crate::utils::as_str(input, "description", ""),
@@ -252,29 +268,28 @@ impl Table {
             data_file: if etl.is_null() {
                 None
             } else {
-                // match etl.as_str() {
-                //     Some(s) => Some(s.to_string()),
-                //     None => None,
-                // }
                 etl.as_str().map(|s| s.to_string())
             },
             data: crate::utils::as_vec(input, "data"),
             owner: crate::utils::as_str(input, "owner", ""),
             grant: YGrant::new(input["grant"].as_vec()),
+            is_template,
+            use_templates,
         })
     }
 
 
     /// build a create or alter sql
     #[allow(unused_mut)]
-    pub fn deploy(
+    pub async fn deploy(
         &self,
         dbc: &mut InfoSchemaType,
-        db: &mut Transaction,
+        db: &mut tokio_postgres::Transaction<'_>,
         schema: &String, // this
         is_retry: bool,
         file: &str,
-        dry_run: Option<&dyn Fn(Vec<String>) -> Result<(), String>>,
+        dry_run: Option<&(dyn Fn(Vec<String>) -> Result<(), String> + Send + Sync)>,
+        opt: &MigrationOptions,
     ) -> Result<bool, String> {
         let mut sql = String::new();
         let mut comments = String::new();
@@ -285,6 +300,7 @@ impl Table {
                 None => TableOnly,
                 Some(mut ts) => {
                     let pks = ts.pks();
+                    let mut skipped_columns = String::new();
                     for dc in &self.columns.list {
                         if !ts.columns.contains_key(&dc.name) {
                             let def = dc.column_def(schema, &self.table_name, file)?;
@@ -294,7 +310,87 @@ impl Table {
                             ).as_str(), &mut sql, is_retry);
                             let _ = ts.columns.insert(dc.get_name(), def);
                             exec = true;
+                        } else {
+                            // Column exists - check for type changes
+                            let existing_col = ts.columns.get(&dc.name).unwrap();
+                            let desired_def = dc.column_def(schema, &self.table_name, file)?;
+
+                            // Normalize types for comparison
+                            let existing_type = existing_col.column_type.to_lowercase();
+                            let desired_type = desired_def.column_type.to_lowercase();
+
+                            if existing_type != desired_type {
+                                // Types differ - check if it's a size change
+                                let type_change = analyze_type_change(&existing_type, &desired_type);
+
+                                match type_change {
+                                    TypeChange::SizeExtension | TypeChange::Compatible => {
+                                        // Safe change - always apply
+                                        let alter_sql = format!(
+                                            "ALTER TABLE {}.{} ALTER COLUMN {} TYPE {}",
+                                            schema, self.table_name, dc.name, desired_def.column_type
+                                        );
+                                        append(&alter_sql, &mut sql, is_retry);
+                                        let _ = ts.columns.insert(dc.get_name(), desired_def);
+                                        exec = true;
+                                    }
+                                    TypeChange::SizeReduction => {
+                                        // Potentially destructive - requires with_size_cut
+                                        let alter_sql = format!(
+                                            "ALTER TABLE {}.{} ALTER COLUMN {} TYPE {}",
+                                            schema, self.table_name, dc.name, desired_def.column_type
+                                        );
+                                        if opt.with_size_cut {
+                                            append(&alter_sql, &mut sql, is_retry);
+                                            let _ = ts.columns.insert(dc.get_name(), desired_def);
+                                            exec = true;
+                                        } else {
+                                            if opt.without_failfast {
+                                                let _ = writeln!(skipped_columns,
+                                                    "-- SKIPPED (with_size_cut=false): {};\n-- Column {} type change from {} to {}",
+                                                    alter_sql, dc.name, existing_type, desired_type);
+                                            } else {
+                                                return Err(format!(
+                                                    "Column {} on {}.{} type change from {} to {} requires size reduction but with_size_cut is disabled. SQL: {};",
+                                                    dc.name, schema, self.table_name, existing_type, desired_type, alter_sql
+                                                ));
+                                            }
+                                        }
+                                    }
+                                    TypeChange::Incompatible => {
+                                        // Incompatible type change - requires with_size_cut as it's destructive
+                                        let alter_sql = format!(
+                                            "ALTER TABLE {}.{} ALTER COLUMN {} TYPE {} USING {}::{}",
+                                            schema, self.table_name, dc.name, desired_def.column_type, dc.name, desired_def.column_type
+                                        );
+                                        if opt.with_size_cut {
+                                            append(&alter_sql, &mut sql, is_retry);
+                                            let _ = ts.columns.insert(dc.get_name(), desired_def);
+                                            exec = true;
+                                        } else {
+                                            if opt.without_failfast {
+                                                let _ = writeln!(skipped_columns,
+                                                    "-- SKIPPED (with_size_cut=false): {};\n-- Column {} incompatible type change from {} to {}",
+                                                    alter_sql, dc.name, existing_type, desired_type);
+                                            } else {
+                                                return Err(format!(
+                                                    "Column {} on {}.{} has incompatible type change from {} to {} but with_size_cut is disabled. SQL: {};",
+                                                    dc.name, schema, self.table_name, existing_type, desired_type, alter_sql
+                                                ));
+                                            }
+                                        }
+                                    }
+                                    TypeChange::NoChange => {
+                                        // No change needed
+                                    }
+                                }
+                            }
                         }
+                    }
+                    // Log skipped column changes if any
+                    if !skipped_columns.is_empty() {
+                        #[cfg(not(feature = "slog"))]
+                        eprintln!("Skipped column type changes:\n{}", skipped_columns);
                     }
                     if let Some(o) = &ts.owner {
                         if self.owner.len() > 0 && &self.owner != o {
@@ -303,15 +399,114 @@ impl Table {
                             ).as_str(), &mut sql, is_retry);
                         }
                     }
+                    let mut skipped_triggers = String::new();
                     for dt in &self.triggers.list {
-                        if !ts.triggers.contains_key(&dt.name) {
+                        let desired_trigger = dt.to_pg_trigger();
+                        let existing_trigger = ts.triggers.get(&dt.name);
+                        let trigger_exists = existing_trigger.is_some();
+                        let trigger_changed = existing_trigger.map_or(false, |ex| !dt.matches_pg_trigger(ex));
+
+                        if !trigger_exists {
+                            // New trigger - create it
                             if let Some(def) = dt.trig_def(schema, &self.table_name) {
                                 let _ = writeln!(sql, "{}\n", def);
-                                let _ = ts.triggers.insert(dt.get_name(), def);
+                                let _ = ts.triggers.insert(dt.get_name(), desired_trigger);
                                 exec = true;
+                            }
+                        } else if trigger_changed {
+                            // Trigger changed
+                            let drop_sql = format!("DROP TRIGGER IF EXISTS {} ON {}.{};", dt.name, schema, self.table_name);
+                            let create_sql = dt.trig_def(schema, &self.table_name).unwrap_or_default();
+
+                            if opt.with_trigger_drop {
+                                // Drop and recreate
+                                let _ = writeln!(sql, "{}", drop_sql);
+                                let _ = writeln!(sql, "{}\n", create_sql);
+                                let _ = ts.triggers.insert(dt.get_name(), desired_trigger);
+                                exec = true;
+                            } else {
+                                if opt.without_failfast {
+                                    // Show skipped SQL
+                                    let _ = writeln!(skipped_triggers, "-- SKIPPED (with_trigger_drop=false):\n-- {}\n-- {}", drop_sql, create_sql);
+                                } else {
+                                    return Err(format!(
+                                        "Trigger {} on {}.{} has changed but without_failfast is enabled. SQL would be:\n{}\n{}",
+                                        dt.name, schema, self.table_name, drop_sql, create_sql
+                                    ));
+                                }
                             }
                         }
                     }
+                    // Log skipped triggers if any
+                    if !skipped_triggers.is_empty() {
+                        #[cfg(not(feature = "slog"))]
+                        eprintln!("Skipped trigger changes:\n{}", skipped_triggers);
+                    }
+
+                    // Check for primary key changes
+                    let desired_pk = self.get_primary_key_columns();
+                    let existing_pk = ts.primary_key.as_ref().map(|pk| pk.columns.clone()).unwrap_or_default();
+
+                    if desired_pk != existing_pk {
+                        let pk_constraint_name = ts.primary_key.as_ref()
+                            .map(|pk| pk.constraint_name.clone())
+                            .unwrap_or_else(|| format!("{}_pkey", self.table_name));
+
+                        let drop_pk_sql = if ts.primary_key.is_some() {
+                            format!("ALTER TABLE {}.{} DROP CONSTRAINT {};", schema, self.table_name, pk_constraint_name)
+                        } else {
+                            String::new()
+                        };
+
+                        let add_pk_sql = if !desired_pk.is_empty() {
+                            format!("ALTER TABLE {}.{} ADD PRIMARY KEY ({});",
+                                schema, self.table_name, desired_pk.join(", "))
+                        } else {
+                            String::new()
+                        };
+
+                        // PK change requires with_index_drop since PK is backed by a unique index
+                        if opt.with_index_drop {
+                            if !drop_pk_sql.is_empty() {
+                                append(&drop_pk_sql, &mut sql, is_retry);
+                            }
+                            if !add_pk_sql.is_empty() {
+                                append(&add_pk_sql, &mut sql, is_retry);
+                            }
+                            // Update dbc with new PK
+                            ts.primary_key = if desired_pk.is_empty() {
+                                None
+                            } else {
+                                Some(crate::loader::PgPrimaryKey {
+                                    constraint_name: format!("{}_pkey", self.table_name),
+                                    columns: desired_pk.clone(),
+                                })
+                            };
+                            exec = true;
+                        } else {
+                            let mut skipped_pk = String::new();
+                            if !drop_pk_sql.is_empty() {
+                                let _ = writeln!(skipped_pk, "-- {}", drop_pk_sql);
+                            }
+                            if !add_pk_sql.is_empty() {
+                                let _ = writeln!(skipped_pk, "-- {}", add_pk_sql);
+                            }
+
+                            if opt.without_failfast {
+                                let _ = writeln!(skipped_pk,
+                                    "-- SKIPPED (with_index_drop=false): Primary key change from {:?} to {:?}",
+                                    existing_pk, desired_pk);
+                                #[cfg(not(feature = "slog"))]
+                                eprintln!("Skipped primary key changes:\n{}", skipped_pk);
+                            } else {
+                                return Err(format!(
+                                    "Primary key on {}.{} has changed from {:?} to {:?} but with_index_drop is disabled. SQL would be:\n{}{}",
+                                    schema, self.table_name, existing_pk, desired_pk, drop_pk_sql, add_pk_sql
+                                ));
+                            }
+                        }
+                    }
+
                     CreateST::None
                 }
             },
@@ -327,11 +522,26 @@ impl Table {
         } {
             // let owner = "";
             let mut columns = String::new();
+
+            // Get primary key columns from column-level definitions (constraint.primaryKey: true)
+            let pk_columns = self.get_primary_key_columns();
+            let has_composite_pk = pk_columns.len() > 1;
+
             let mut st = PgTable {
                 table_name: self.table_name.clone(),
                 columns: HashMap::new(),
                 fks: Default::default(),
                 triggers: HashMap::new(),
+                indexes: HashMap::new(),
+                grants: HashMap::new(),
+                primary_key: if pk_columns.is_empty() {
+                    None
+                } else {
+                    Some(crate::loader::PgPrimaryKey {
+                        constraint_name: format!("{}_pkey", self.table_name),
+                        columns: pk_columns.clone(),
+                    })
+                },
                 sort_order: 0,
                 table_comment: None,
                 owner: if self.owner.len() > 0 { Some(self.owner.clone()) } else { None },
@@ -339,22 +549,32 @@ impl Table {
 
             for dc in &self.columns.list {
                 let cd = dc.column_def(schema, &self.table_name, file)?;
-                // let _ = write!(columns, "{}, ", cd.def(true));
                 let _ = st.columns.insert(dc.get_name(), cd);
                 self.comments(&mut comments, schema, &dc.name, &dc.description);
             }
 
-            // if columns.len() > 0 {
-            let pks = st.pks();
+            // Build column definitions
+            // If composite PK or table-level PK, don't include pk in column def (will add as separate constraint)
+            let skip_column_pk = has_composite_pk;
             for dc in &self.columns.list {
                 if let Some(cd) = st.columns.get(dc.name.as_str()) {
-                    columns.push_str(cd.def(pks.is_some()).as_str());
+                    columns.push_str(cd.def(skip_column_pk).as_str());
                     columns.push_str(", ");
                 }
             }
-            if let Some(pks) = pks {
-                columns.push_str(pks.as_str());
+
+            // Add PRIMARY KEY constraint if composite or table-level PK
+            if !pk_columns.is_empty() && has_composite_pk {
+                columns.push_str(&format!("PRIMARY KEY ({})", pk_columns.join(", ")));
                 columns.push_str(", ");
+            } else if !pk_columns.is_empty() {
+                // Single column PK from column definition - handled in column def
+                // But we still need to add it if st.pks() returns something
+                let pks = st.pks();
+                if let Some(pks) = pks {
+                    columns.push_str(pks.as_str());
+                    columns.push_str(", ");
+                }
             }
             if let SchemaAndTable = do_create {
                 if schema.as_str() != "public" {
@@ -389,7 +609,7 @@ impl Table {
             for dt in &self.triggers.list {
                 if let Some(td) = dt.trig_def(schema, &self.table_name) {
                     let _ = writeln!(sql, "{}\n", td);
-                    st.triggers.insert(dt.get_name(), td);
+                    st.triggers.insert(dt.get_name(), dt.to_pg_trigger());
                 }
             }
             dbc.get_mut(schema)
@@ -407,25 +627,54 @@ impl Table {
             }
 
         }
+
+        // Generate CREATE INDEX statements for indexes defined in YAML
+        let index_builder = crate::index::IndexBuilder::new(&self.columns);
+        let indexes_sql = index_builder.generate_sql(schema, &self.table_name, dbc, opt)?;
+
+        // Generate GRANT/REVOKE statements for grants defined in YAML
+        let grant_builder = crate::grant::GrantBuilder::new(&self.grant, &self.table_name);
+        let grants_sql = grant_builder.generate_sql(schema, dbc, opt)?;
+
         let mut data = String::new();
         for row in &self.data {
             self.insert(&mut data, row, schema);
         }
 
+        let exec = exec || !indexes_sql.is_empty() || !grants_sql.is_empty();
+
         match dry_run {
             Some(store) => {
-                store(vec![sql, comments, data]).map(|_| false)
+                store(vec![sql, comments, indexes_sql, grants_sql, data]).map(|_| false)
             }
             None => {
-                #[cfg(feature = "slog")] log_debug(format!("deploy SQL {:?}[{}:{}]> {}", exec, file, schema, sql));
                 if exec {
-                    let source = if file.len() > 0 { format!(", source: {}", file)} else {"".to_string()};
-                    let _ = db.batch_execute(sql.as_str())
-                        .map_err(|e| format!("DB execute [{}]: {} {}", sql, e, source))?;
-                    let _ = db.batch_execute(comments.as_str())
-                        .map_err(|e| format!("DB execute [{}]: {} {}", comments, e, source))?;
-                    let _ = db.batch_execute(data.as_str())
-                        .map_err(|e| format!("DB execute [{}]: {} {}", data, e, source))?;
+                    let source = if file.len() > 0 { format!(", source: {}", file) } else { "".to_string() };
+                    if !sql.is_empty() {
+                        #[cfg(feature = "slog")] log_debug("deploy SQL", &sql, file, schema);
+                        let _ = db.batch_execute(sql.as_str()).await
+                            .map_err(|e| format!("DB execute [{}]: {} {}", sql, e, source))?;
+                    }
+                    if !comments.is_empty() {
+                        #[cfg(feature = "slog")] log_debug("deploy SQL", &comments, file, schema);
+                        let _ = db.batch_execute(comments.as_str()).await
+                            .map_err(|e| format!("DB execute comments [{}]: {} {}", comments, e, source))?;
+                    }
+                    if !indexes_sql.is_empty() {
+                        #[cfg(feature = "slog")] log_debug("deploy SQL", &indexes_sql, file, schema);
+                        let _ = db.batch_execute(indexes_sql.as_str()).await
+                            .map_err(|e| format!("DB execute indexes [{}]: {} {}", indexes_sql, e, source))?;
+                    }
+                    if !grants_sql.is_empty() {
+                        #[cfg(feature = "slog")] log_debug("deploy SQL", &grants_sql, file, schema);
+                        let _ = db.batch_execute(grants_sql.as_str()).await
+                            .map_err(|e| format!("DB execute grants [{}]: {} {}", grants_sql, e, source))?;
+                    }
+                    if !data.is_empty() {
+                        #[cfg(feature = "slog")] log_debug("deploy SQL", &data, file, schema);
+                        let _ = db.batch_execute(data.as_str()).await
+                            .map_err(|e| format!("DB execute data upserts [{}]: {} {}", data, e, source))?;
+                    }
                 }
                 Ok(exec)
             }
@@ -484,16 +733,16 @@ impl Table {
 
     /// build a create or alter sql
     #[allow(unused, unused_mut)]
-    pub fn deploy_fk(
+    pub async fn deploy_fk(
         &self,
         // target: &FileVersion,
         schemas: &OrderedHashMap<Schema>, //FilesMap,
         dbc: &mut InfoSchemaType,
-        db: &mut Transaction,
+        db: &mut tokio_postgres::Transaction<'_>,
         schema: &String,
         is_retry: bool,
         file: &str,
-        dry_run: Option<&dyn Fn(Vec<String>) -> Result<(), String>>,
+        dry_run: Option<&(dyn Fn(Vec<String>) -> Result<(), String> + Send + Sync)>,
     ) -> Result<bool, String> {
         let mut sql = String::new();
         let mut fk_list = HashMap::new();
@@ -541,9 +790,9 @@ impl Table {
                 }
             }
             append(format!(
-                "ALTER TABLE {}.{} ADD CONSTRAINT fk_{}_{}_{} FOREIGN KEY ({}) REFERENCES {}.{} ({}) {}",
+                "ALTER TABLE {}.{} ADD CONSTRAINT fk_{}_{}_{}_{} FOREIGN KEY ({}) REFERENCES {}.{} ({}) {}",
                 schema, self.table_name, schema, self.table_name, ff.table,
-                ff.name, ff.schema, &ff.table, ff.columns(), ff.sql
+                ff.name, ff.name, ff.schema, &ff.table, ff.columns(), ff.sql
             ).as_str(), &mut sql, is_retry);
         }
 
@@ -553,7 +802,7 @@ impl Table {
             }
             None => {
                 if exec {
-                    if let Err(e) = db.batch_execute(sql.as_str()) {
+                    if let Err(e) = db.batch_execute(sql.as_str()).await {
                         return Err(format!("DB FK execute [{}]: {} source: {}", sql, e, file));
                     }
                     Ok(exec)
@@ -581,6 +830,84 @@ impl Table {
     pub fn is_table_transaction(&self) -> bool {
         self.transaction.as_str() == "table"
             || self.transaction.as_str() == "retry"
+    }
+
+    /// Check if this table is a template (should not be created in DB)
+    pub fn is_template(&self) -> bool {
+        self.is_template.unwrap_or(false)
+    }
+
+    /// Merge another table's definition into this table (for template inheritance)
+    /// Template columns, triggers, and grants are added first, then this table's definitions override
+    pub fn merge_from(&mut self, template: &Table) {
+        // Merge columns - template columns come first, table columns override if same name
+        let mut merged_columns = OrderedHashMap::new();
+        for col in &template.columns.list {
+            let _ = merged_columns.append(col.clone());
+        }
+        for col in &self.columns.list {
+            if merged_columns.map.contains_key(&col.name) {
+                // Override existing column from template
+                if let Some(existing) = merged_columns.get_mut(&col.name) {
+                    *existing = col.clone();
+                }
+            } else {
+                let _ = merged_columns.append(col.clone());
+            }
+        }
+        self.columns = merged_columns;
+
+        // Merge triggers - template triggers come first, table triggers override if same name
+        let mut merged_triggers = OrderedHashMap::new();
+        for trig in &template.triggers.list {
+            let _ = merged_triggers.append(trig.clone());
+        }
+        for trig in &self.triggers.list {
+            if merged_triggers.map.contains_key(&trig.name) {
+                // Override existing trigger from template
+                if let Some(existing) = merged_triggers.get_mut(&trig.name) {
+                    *existing = trig.clone();
+                }
+            } else {
+                let _ = merged_triggers.append(trig.clone());
+            }
+        }
+        self.triggers = merged_triggers;
+
+        // Merge grants - template grants come first, then table grants are added
+        let mut merged_grants = template.grant.clone();
+        merged_grants.extend(self.grant.clone());
+        self.grant = merged_grants;
+
+        // Inherit owner if not set
+        if self.owner.is_empty() && !template.owner.is_empty() {
+            self.owner = template.owner.clone();
+        }
+
+        // Inherit description if not set
+        if self.description.is_empty() && !template.description.is_empty() {
+            self.description = template.description.clone();
+        }
+
+        // Inherit sql suffix if not set
+        if self.sql.is_empty() && !template.sql.is_empty() {
+            self.sql = template.sql.clone();
+        }
+
+        // Inherit constraint if not set
+        if self.constraint.is_empty() && !template.constraint.is_empty() {
+            self.constraint = template.constraint.clone();
+        }
+        // Note: primary key columns are inherited through merged columns with constraint.primaryKey
+    }
+
+    /// Get the primary key columns from columns with constraint.primaryKey = true
+    /// Returns columns in order (preserves column order from the columns list)
+    pub fn get_primary_key_columns(&self) -> Vec<String> {
+        self.columns.list.iter()
+            .filter(|c| c.is_pk())
+            .map(|c| c.name.clone())
+            .collect()
     }
 }
 
@@ -662,6 +989,151 @@ END
 $do$;
 "#;
 
+
+/// Type of column type change
+#[derive(Debug, PartialEq)]
+enum TypeChange {
+    /// No change needed
+    NoChange,
+    /// Size extension (safe) - e.g., varchar(50) -> varchar(100)
+    SizeExtension,
+    /// Size reduction (potentially destructive) - e.g., varchar(100) -> varchar(50)
+    SizeReduction,
+    /// Compatible type change (safe) - e.g., int4 -> int8
+    Compatible,
+    /// Incompatible type change (destructive) - e.g., int -> varchar
+    Incompatible,
+}
+
+/// Parse size from type string, returns (base_type, size, scale)
+/// Examples:
+/// - varchar(100) -> ("varchar", Some(100), None)
+/// - NUMERIC(10,2) -> ("numeric", Some(10), Some(2))
+/// - int4 -> ("int4", None, None)
+fn parse_type_size(type_str: &str) -> (String, Option<i32>, Option<i32>) {
+    let type_lower = type_str.to_lowercase().trim().to_string();
+
+    if let Some(paren_pos) = type_lower.find('(') {
+        let base_type = type_lower[..paren_pos].trim().to_string();
+        let params = &type_lower[paren_pos + 1..type_lower.len() - 1];
+
+        if params.contains(',') {
+            // NUMERIC(precision, scale)
+            let parts: Vec<&str> = params.split(',').collect();
+            let precision = parts.get(0).and_then(|s| s.trim().parse::<i32>().ok());
+            let scale = parts.get(1).and_then(|s| s.trim().parse::<i32>().ok());
+            (base_type, precision, scale)
+        } else {
+            // varchar(length)
+            let size = params.trim().parse::<i32>().ok();
+            (base_type, size, None)
+        }
+    } else {
+        (type_lower, None, None)
+    }
+}
+
+/// Analyze the type change between existing and desired column types
+fn analyze_type_change(existing: &str, desired: &str) -> TypeChange {
+    let (existing_base, existing_size, existing_scale) = parse_type_size(existing);
+    let (desired_base, desired_size, desired_scale) = parse_type_size(desired);
+
+    // Normalize base types (int4 == integer == int == serial, etc.)
+    // serial/bigserial/smallserial are pseudo-types that create int4/int8/int2 with sequences
+    let normalize_base = |t: &str| -> String {
+        match t {
+            "int" | "int4" | "integer" | "serial" => "int4".to_string(),
+            "int8" | "bigint" | "bigserial" | "serial8" => "int8".to_string(),
+            "int2" | "smallint" | "smallserial" | "serial2" => "int2".to_string(),
+            "float4" | "real" => "float4".to_string(),
+            "float8" | "double precision" | "double" => "float8".to_string(),
+            "bool" | "boolean" => "bool".to_string(),
+            "varchar" | "character varying" => "varchar".to_string(),
+            "char" | "character" | "bpchar" => "char".to_string(),
+            "text" => "text".to_string(),
+            "numeric" | "decimal" => "numeric".to_string(),
+            "timestamptz" | "timestamp with time zone" => "timestamptz".to_string(),
+            "timestamp" | "timestamp without time zone" => "timestamp".to_string(),
+            "timetz" | "time with time zone" => "timetz".to_string(),
+            "time" | "time without time zone" => "time".to_string(),
+            "json" | "jsonb" => t.to_string(), // keep distinct, jsonb is different from json
+            other => other.to_string(),
+        }
+    };
+
+    let norm_existing = normalize_base(&existing_base);
+    let norm_desired = normalize_base(&desired_base);
+
+    // Same base type - check size changes
+    if norm_existing == norm_desired {
+        match (&existing_size, &desired_size) {
+            (Some(e), Some(d)) => {
+                if e == d {
+                    // Check scale for NUMERIC
+                    match (&existing_scale, &desired_scale) {
+                        (Some(es), Some(ds)) if es == ds => TypeChange::NoChange,
+                        (Some(es), Some(ds)) if ds > es => TypeChange::SizeExtension,
+                        (Some(_), Some(_)) => TypeChange::SizeReduction,
+                        (None, None) => TypeChange::NoChange,
+                        _ => TypeChange::SizeExtension, // Scale added or removed
+                    }
+                } else if d > e {
+                    TypeChange::SizeExtension
+                } else {
+                    TypeChange::SizeReduction
+                }
+            }
+            (None, Some(_)) => TypeChange::SizeExtension, // Adding size constraint
+            (Some(_), None) => TypeChange::SizeExtension, // Removing size constraint (e.g., varchar(100) -> text)
+            (None, None) => TypeChange::NoChange,
+        }
+    } else {
+        // Different base types - check compatibility
+        // Safe promotions: int2 -> int4 -> int8, float4 -> float8
+        let is_safe_promotion = matches!(
+            (norm_existing.as_str(), norm_desired.as_str()),
+            ("int2", "int4") | ("int2", "int8") | ("int4", "int8") |
+            ("float4", "float8") |
+            ("varchar", "text") | ("char", "text") | ("char", "varchar")
+        );
+
+        if is_safe_promotion {
+            TypeChange::Compatible
+        } else {
+            // Check if converting to varchar/text with sufficient size
+            // These conversions are safe if varchar is large enough to hold the string representation
+            let min_varchar_size = match norm_existing.as_str() {
+                "int2" => Some(6),      // -32768 to 32767
+                "int4" => Some(11),     // -2147483648 to 2147483647
+                "int8" => Some(20),     // -9223372036854775808 to 9223372036854775807
+                "float4" => Some(15),   // ~7 decimal digits + sign + decimal point + exponent
+                "float8" => Some(25),   // ~15 decimal digits + sign + decimal point + exponent
+                "numeric" => Some(existing_size.map(|s| s + 2).unwrap_or(40)), // precision + sign + decimal
+                "bool" => Some(5),      // "false"
+                "timestamp" | "timestamptz" => Some(32), // '2024-01-22 12:34:56.123456+00'
+                "time" | "timetz" => Some(18),           // '12:34:56.123456+00'
+                "date" => Some(10),     // '2024-01-22'
+                "uuid" => Some(36),     // 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
+                "json" | "jsonb" => None, // variable, can't determine safe size
+                _ => None,
+            };
+
+            // Check if target is varchar/text with sufficient size
+            let is_safe_to_varchar = match (norm_desired.as_str(), desired_size) {
+                ("text", _) => min_varchar_size.is_some(), // text has no limit
+                ("varchar", Some(size)) => min_varchar_size.map_or(false, |min| size >= min),
+                ("varchar", None) => min_varchar_size.is_some(), // varchar without size = unlimited
+                _ => false,
+            };
+
+            if is_safe_to_varchar {
+                TypeChange::Compatible
+            } else {
+                TypeChange::Incompatible
+            }
+        }
+    }
+}
 
 #[inline]
 fn pks(schema: &String, table: &String, sks: &OrderedHashMap<Schema>) -> HashSet<String> {
