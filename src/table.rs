@@ -240,6 +240,37 @@ impl Table {
                 }
             }
         }
+        // Validate partition_by: only one column allowed, must be RANGE/LIST/HASH
+        let mut partition_count = 0usize;
+        for col in &mut columns.list {
+            if let Some(ref pv) = col.partition_by {
+                match pv.as_str() {
+                    "RANGE" | "LIST" | "HASH" => {}
+                    _ => {
+                        return Err(format!(
+                            "Invalid partition_by value '{}' on column '{}' in table '{}'. Expected one of: RANGE, LIST, HASH{}{}",
+                            pv, col.name, table_name,
+                            match file { None => "", Some(_) => ", found in file: " },
+                            match file { None => "", Some(f) => f.as_str() },
+                        ));
+                    }
+                }
+                partition_count += 1;
+                if partition_count > 1 {
+                    return Err(format!(
+                        "Only one column can have partition_by on table '{}'. Found multiple columns with partition_by{}{}",
+                        table_name,
+                        match file { None => "", Some(_) => ", found in file: " },
+                        match file { None => "", Some(f) => f.as_str() },
+                    ));
+                }
+                // Auto-create index if none declared
+                if col.index.is_none() {
+                    col.index = Some(crate::column::Index::default());
+                }
+            }
+        }
+
         let etl = &input["data_file"];
         // Parse template field - can be boolean or array of strings
         let template_field = &input["template"];
@@ -588,13 +619,20 @@ impl Table {
             if let Some(idx) = columns.rfind(",") {
                 columns.remove(idx);
             }
+
+            // Build partition clause from column-level partition_by
+            let partition_clause = self.columns.list.iter()
+                .find_map(|c| c.partition_by.as_ref().map(|pv| format!(" PARTITION BY {} ({})", pv, c.name)))
+                .unwrap_or_default();
+
+            let suffix = format!("{}{}", partition_clause, self.sql);
             let csql = format!("CREATE TABLE {}.{} ({}{}{}){}; \n",
                                schema,
                                self.table_name,
                                columns,
                                if self.constraint.len() > 0 { ", " } else { "" },
                                self.constraint,
-                               self.sql
+                               suffix
             );
 
             sql.push_str(csql.as_str());

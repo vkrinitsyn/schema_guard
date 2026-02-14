@@ -144,6 +144,13 @@ schema:
                 sql:
                   # additional SQL (appended to index creation, prefer specific fields, ignored on index changes)
                   type: string
+        partition_by:
+          # partitioning method: RANGE, LIST, HASH - please use pg_partman for more complex partitioning strategies
+          type: string
+        pg_partman:
+          create_partition:
+            # pg_partman parameters like: p_interval := '1 day', p_start_partition etc for create_partition call except p_parent_table and p_control
+            type: string
         description:
           type: string
         sql:

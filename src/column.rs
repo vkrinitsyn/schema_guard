@@ -26,6 +26,7 @@ impl Default for Column {
             description: "".to_string(),
             sql: "".to_string(),
             index: None,
+            partition_by: None,
         }
     }
 }
@@ -46,6 +47,9 @@ pub struct Column {
     pub sql: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub index: Option<Index>,
+    /// Partitioning method: RANGE, LIST, or HASH
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub partition_by: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -147,6 +151,13 @@ impl Column {
             Index::new(index) // index: { ... } returns Some only if name is set
         };
 
+        let partition_by_val = crate::utils::as_str_esc(input, "partition_by");
+        let partition_by = if partition_by_val.is_empty() {
+            None
+        } else {
+            Some(partition_by_val.to_uppercase())
+        };
+
         Column {
             name: crate::utils::safe_sql_name(crate::utils::as_str_esc(input, "name")),
             column_type: crate::utils::as_str_esc(input, "type"),
@@ -155,6 +166,7 @@ impl Column {
             sql: crate::utils::as_str_esc(input, "sql"),
             constraint,
             index,
+            partition_by,
         }
     }
 
@@ -177,6 +189,7 @@ impl Column {
             sql: "".to_string(),
             constraint,
             index: None,
+            partition_by: None,
         }
     }
 
