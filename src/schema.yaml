@@ -148,9 +148,11 @@ schema:
           # partitioning method: RANGE, LIST, HASH - please use pg_partman for more complex partitioning strategies
           type: string
         pg_partman:
-          create_partition:
-            # pg_partman parameters like: p_interval := '1 day', p_start_partition etc for create_partition call except p_parent_table and p_control
-            type: string
+          type: object
+          items:
+            create_partition:
+              # pg_partman parameters like: p_interval := '1 day', p_start_partition etc for create_partition call except p_parent_table and p_control
+              type: string
         description:
           type: string
         sql:

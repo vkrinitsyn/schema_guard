@@ -194,10 +194,13 @@ impl PgColumnDfn {
 }
 
 
-pub fn load_info_schema(db_name: &str, db: &mut Transaction) -> Result<InfoSchemaType, String> {
-    let mut data = load_info_cc(db_name, db)?;
-    let _ = load_info_fk(db_name, db, &mut data)?;
-    let _ = load_info_tg(db_name, db, &mut data)?;
+pub async fn load_info_schema(db_name: &str, db: &mut tokio_postgres::Transaction<'_>) -> Result<InfoSchemaType, String> {
+    let mut data = load_info_cc(db_name, db).await?;
+    let _ = load_info_pk(db_name, db, &mut data).await?;
+    let _ = load_info_idx(db_name, db, &mut data).await?;
+    let _ = load_info_fk(db_name, db, &mut data).await?;
+    let _ = load_info_tg(db_name, db, &mut data).await?;
+    let _ = load_info_grant(db_name, db, &mut data).await?;
     Ok(data)
 }
 
@@ -491,7 +494,7 @@ async fn load_info_fk(db_name: &str, db: &mut tokio_postgres::Transaction<'_>, d
 }
 
 #[inline]
-async fn load_info_idx(_db_name: &str, db: &mut tokio_postgres::Transaction<'_>, data: &mut InfoSchemaType) -> Result<(), String> {
+async fn load_info_idx(db_name: &str, db: &mut tokio_postgres::Transaction<'_>, data: &mut InfoSchemaType) -> Result<(), String> {
     // Query indexes with detailed column information from pg_index
     let result = db.query(
         "SELECT
@@ -515,11 +518,12 @@ async fn load_info_idx(_db_name: &str, db: &mut tokio_postgres::Transaction<'_>,
          JOIN pg_namespace n ON n.oid = t.relnamespace
          JOIN pg_am am ON am.oid = i.relam
          JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
+         JOIN information_schema.tables ist ON ist.table_catalog = $1 AND ist.table_schema = n.nspname AND ist.table_name = t.relname
          LEFT JOIN pg_collation coll ON coll.oid = ANY(ix.indcollation)
             AND array_position(ix.indcollation, coll.oid) = array_position(ix.indkey, a.attnum)
          WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
          ORDER BY n.nspname, t.relname, i.relname, array_position(ix.indkey, a.attnum)",
-        &[]
+        &[&db_name]
     ).await.map_err(|e| format!("on loading pg_indexes: {}", e))?;
 
     // Group results by index
@@ -594,7 +598,7 @@ async fn load_info_idx(_db_name: &str, db: &mut tokio_postgres::Transaction<'_>,
 }
 
 #[inline]
-async fn load_info_pk(db: &mut tokio_postgres::Transaction<'_>, data: &mut InfoSchemaType) -> Result<(), String> {
+async fn load_info_pk(db_name:  &str, db: &mut tokio_postgres::Transaction<'_>, data: &mut InfoSchemaType) -> Result<(), String> {
     // Query primary keys with column order from pg_constraint
     let result = db.query(
         "SELECT
@@ -607,10 +611,11 @@ async fn load_info_pk(db: &mut tokio_postgres::Transaction<'_>, data: &mut InfoS
          JOIN pg_class t ON t.oid = c.conrelid
          JOIN pg_namespace n ON n.oid = t.relnamespace
          JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(c.conkey)
+         JOIN information_schema.tables ist ON ist.table_catalog = $1 AND ist.table_schema = n.nspname AND ist.table_name = t.relname
          WHERE c.contype = 'p'
            AND n.nspname NOT IN ('pg_catalog', 'information_schema')
          ORDER BY n.nspname, t.relname, array_position(c.conkey, a.attnum)",
-        &[]
+            &[&db_name]
     ).await.map_err(|e| format!("on loading primary keys: {}", e))?;
 
     // Group results by table
@@ -668,7 +673,7 @@ async fn load_info_pk(db: &mut tokio_postgres::Transaction<'_>, data: &mut InfoS
 }
 
 #[inline]
-async fn load_info_grant(_db_name: &str, db: &mut tokio_postgres::Transaction<'_>, data: &mut InfoSchemaType) -> Result<(), String> {
+async fn load_info_grant(db_name: &str, db: &mut tokio_postgres::Transaction<'_>, data: &mut InfoSchemaType) -> Result<(), String> {
     // Query table grants from information_schema
     let result = db.query(
         "SELECT
@@ -680,8 +685,9 @@ async fn load_info_grant(_db_name: &str, db: &mut tokio_postgres::Transaction<'_
          FROM information_schema.table_privileges
          WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
            AND grantor != grantee
+           AND table_catalog = $1
          ORDER BY table_schema, table_name, grantee",
-        &[]
+        &[&db_name]
     ).await.map_err(|e| format!("on loading table_privileges: {}", e))?;
 
     for r in result {

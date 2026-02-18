@@ -7,12 +7,8 @@ use std::fs;
 use std::result::Result;
 use std::str::FromStr;
 use std::sync::{Arc, RwLock};
-use std::time::Duration;
-use bb8::Pool;
-use bb8_postgres::PostgresConnectionManager;
 
 use lazy_static::lazy_static;
-use postgres::Client;
 
 
 use slog::Logger;
@@ -89,7 +85,30 @@ pub fn get_schema() -> Vec<Yaml> {
 
 /// Migrate one yaml schema file with options
 pub async fn migrate1(schema: Yaml, db_url: &str) -> Result<usize, String> {
-    migrate_opt(schema, db_url, MigrationOptions::default()).await
+    let config = tokio_postgres::config::Config::from_str(db_url)
+        .map_err(|e| format!("parse db_url: {e}"))?;
+    let (mut client, conn) = config.connect(tokio_postgres::NoTls)
+        .await.map_err(|e| format!("connect: {e}"))?;
+    tokio::spawn(async move { let _ = conn.await; });
+    let mut tx = client.transaction()
+        .await.map_err(|e| format!("transaction: {e}"))?;
+    let cnt = migrate(schema, &mut tx, true, None, "", &MigrationOptions::default()).await?;
+    tx.commit().await.map_err(|e| format!("commit: {e}"))?;
+    Ok(cnt)
+}
+
+/// Migrate one yaml schema file with options
+pub async fn migrate_opt(schema: Yaml, db_url: &str, opt: &MigrationOptions) -> Result<usize, String> {
+    let config = tokio_postgres::config::Config::from_str(db_url)
+        .map_err(|e| format!("parse db_url: {e}"))?;
+    let (mut client, conn) = config.connect(tokio_postgres::NoTls)
+        .await.map_err(|e| format!("connect: {e}"))?;
+    tokio::spawn(async move { let _ = conn.await; });
+    let mut tx = client.transaction()
+        .await.map_err(|e| format!("transaction: {e}"))?;
+    let cnt = migrate(schema, &mut tx, true, None, "", &opt).await?;
+    tx.commit().await.map_err(|e| format!("commit: {e}"))?;
+    Ok(cnt)
 }
 
 /// main entry point to apply schema from yaml to the database
