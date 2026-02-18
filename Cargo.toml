@@ -1,6 +1,6 @@
 [package]
 name = "schema_guard_tokio"
-version = "1.9.3"
+version = "1.9.4"
 authors = ["V.Krinitsyn <V.Krinitsyn@gmail.com>"]
 edition = "2018"
 description = "Schema Guard: Relation Database (Schema) Management tool"
@@ -35,8 +35,8 @@ yaml-rust = "^0.4.5"
 
 yaml-validator = "0.2.0"
 
-postgres-native-tls = { version = "^0.5.0"}
-native-tls = { version = "^0.2.11"}
+tokio-postgres-rustls = { version = "^0.12.0" }
+rustls = { version = "^0.23.0" }
 bb8 = { version = "0.8.3"}
 bb8-postgres = {version = "0.8.0", features = ["with-chrono-0_4","with-uuid-0_8"]}
 tokio = { version = "^1.36.0", features = ["test-util", "full"]}
