@@ -430,48 +430,50 @@ impl Table {
                             ).as_str(), &mut sql, is_retry);
                         }
                     }
-                    let mut skipped_triggers = String::new();
-                    for dt in &self.triggers.list {
-                        let desired_trigger = dt.to_pg_trigger();
-                        let existing_trigger = ts.triggers.get(&dt.name);
-                        let trigger_exists = existing_trigger.is_some();
-                        let trigger_changed = existing_trigger.map_or(false, |ex| !dt.matches_pg_trigger(ex));
+                    if !opt.exclude_triggers {
+                        let mut skipped_triggers = String::new();
+                        for dt in &self.triggers.list {
+                            let desired_trigger = dt.to_pg_trigger();
+                            let existing_trigger = ts.triggers.get(&dt.name);
+                            let trigger_exists = existing_trigger.is_some();
+                            let trigger_changed = existing_trigger.map_or(false, |ex| !dt.matches_pg_trigger(ex));
 
-                        if !trigger_exists {
-                            // New trigger - create it
-                            if let Some(def) = dt.trig_def(schema, &self.table_name) {
-                                let _ = writeln!(sql, "{}\n", def);
-                                let _ = ts.triggers.insert(dt.get_name(), desired_trigger);
-                                exec = true;
-                            }
-                        } else if trigger_changed {
-                            // Trigger changed
-                            let drop_sql = format!("DROP TRIGGER IF EXISTS {} ON {}.{};", dt.name, schema, self.table_name);
-                            let create_sql = dt.trig_def(schema, &self.table_name).unwrap_or_default();
+                            if !trigger_exists {
+                                // New trigger - create it
+                                if let Some(def) = dt.trig_def(schema, &self.table_name) {
+                                    let _ = writeln!(sql, "{}\n", def);
+                                    let _ = ts.triggers.insert(dt.get_name(), desired_trigger);
+                                    exec = true;
+                                }
+                            } else if trigger_changed {
+                                // Trigger changed
+                                let drop_sql = format!("DROP TRIGGER IF EXISTS {} ON {}.{};", dt.name, schema, self.table_name);
+                                let create_sql = dt.trig_def(schema, &self.table_name).unwrap_or_default();
 
-                            if opt.with_trigger_drop {
-                                // Drop and recreate
-                                let _ = writeln!(sql, "{}", drop_sql);
-                                let _ = writeln!(sql, "{}\n", create_sql);
-                                let _ = ts.triggers.insert(dt.get_name(), desired_trigger);
-                                exec = true;
-                            } else {
-                                if opt.without_failfast {
-                                    // Show skipped SQL
-                                    let _ = writeln!(skipped_triggers, "-- SKIPPED (with_trigger_drop=false):\n-- {}\n-- {}", drop_sql, create_sql);
+                                if opt.with_trigger_drop {
+                                    // Drop and recreate
+                                    let _ = writeln!(sql, "{}", drop_sql);
+                                    let _ = writeln!(sql, "{}\n", create_sql);
+                                    let _ = ts.triggers.insert(dt.get_name(), desired_trigger);
+                                    exec = true;
                                 } else {
-                                    return Err(format!(
-                                        "Trigger {} on {}.{} has changed but without_failfast is enabled. SQL would be:\n{}\n{}",
-                                        dt.name, schema, self.table_name, drop_sql, create_sql
-                                    ));
+                                    if opt.without_failfast {
+                                        // Show skipped SQL
+                                        let _ = writeln!(skipped_triggers, "-- SKIPPED (with_trigger_drop=false):\n-- {}\n-- {}", drop_sql, create_sql);
+                                    } else {
+                                        return Err(format!(
+                                            "Trigger {} on {}.{} has changed but without_failfast is enabled. SQL would be:\n{}\n{}",
+                                            dt.name, schema, self.table_name, drop_sql, create_sql
+                                        ));
+                                    }
                                 }
                             }
                         }
-                    }
-                    // Log skipped triggers if any
-                    if !skipped_triggers.is_empty() {
-                        #[cfg(not(feature = "slog"))]
-                        eprintln!("Skipped trigger changes:\n{}", skipped_triggers);
+                        // Log skipped triggers if any
+                        if !skipped_triggers.is_empty() {
+                            #[cfg(not(feature = "slog"))]
+                            eprintln!("Skipped trigger changes:\n{}", skipped_triggers);
+                        }
                     }
 
                     // Check for primary key changes
@@ -644,10 +646,12 @@ impl Table {
                 ).as_str(), &mut sql, is_retry);
             }
             // }
-            for dt in &self.triggers.list {
-                if let Some(td) = dt.trig_def(schema, &self.table_name) {
-                    let _ = writeln!(sql, "{}\n", td);
-                    st.triggers.insert(dt.get_name(), dt.to_pg_trigger());
+            if !opt.exclude_triggers {
+                for dt in &self.triggers.list {
+                    if let Some(td) = dt.trig_def(schema, &self.table_name) {
+                        let _ = writeln!(sql, "{}\n", td);
+                        st.triggers.insert(dt.get_name(), dt.to_pg_trigger());
+                    }
                 }
             }
             dbc.get_mut(schema)

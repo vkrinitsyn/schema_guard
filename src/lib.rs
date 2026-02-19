@@ -69,6 +69,9 @@ pub struct MigrationOptions {
     /// if trigger change detected, then perform drop before update, otherwise ignore changes, also see failfast flag
     /// <li> default: false
     pub with_trigger_drop: bool,
+    /// do not perform trigger and creation. default: create trigger.
+    /// <li> default: false
+    pub exclude_triggers: bool,
     /// if access(grant) change detected, then perform revoke, otherwise ignore changes, also see failfast flag
     /// <li> default: false
     pub with_revoke: bool,
@@ -235,5 +238,6 @@ mod tests {
         assert!(!m.with_index_drop);
         assert!(!m.with_revoke);
         assert!(!m.with_trigger_drop);
+        assert!(!m.exclude_triggers);
     }
 }
