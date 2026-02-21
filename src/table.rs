@@ -335,10 +335,52 @@ impl Table {
                     for dc in &self.columns.list {
                         if !ts.columns.contains_key(&dc.name) {
                             let def = dc.column_def(schema, &self.table_name, file)?;
-                            append(format!(
-                                "ALTER TABLE {}.{} ADD COLUMN {}",
-                                schema, self.table_name, def.def(pks.is_some())
-                            ).as_str(), &mut sql, opt.with_ddl_retry);
+                            if opt.with_ddl_retry {
+                                if let Some(base_type) = serial_to_base_type(&def.column_type) {
+                                    // serial/bigserial/smallserial are not valid inside PL/pgSQL
+                                    // EXECUTE '...'. Expand them: create the sequence separately
+                                    // and reference it via nextval with escaped quotes.
+                                    let seq_name = format!("{}_{}_seq", self.table_name, dc.name);
+                                    let seq_fqn = format!("{}.{}", schema, seq_name);
+                                    // CREATE SEQUENCE is idempotent with IF NOT EXISTS
+                                    sql.push_str(&format!("CREATE SEQUENCE IF NOT EXISTS {};\n", seq_fqn));
+                                    // Build column def for use inside EXECUTE '...' — single
+                                    // quotes inside the EXECUTE string must be doubled.
+                                    let mut col_parts = format!("{} {}", dc.name, base_type);
+                                    if def.pk && !pks.is_some() {
+                                        col_parts.push_str(" primary key");
+                                    }
+                                    if !def.nullable {
+                                        col_parts.push_str(" not null");
+                                    }
+                                    col_parts.push_str(&format!(" default nextval(''{}''::regclass)", seq_fqn));
+                                    if let Some(ssql) = &def.sql {
+                                        if !ssql.is_empty() {
+                                            col_parts.push(' ');
+                                            col_parts.push_str(ssql);
+                                        }
+                                    }
+                                    append(&format!(
+                                        "ALTER TABLE {}.{} ADD COLUMN {}",
+                                        schema, self.table_name, col_parts
+                                    ), &mut sql, true);
+                                    // Bind sequence ownership to the column
+                                    sql.push_str(&format!(
+                                        "ALTER SEQUENCE {} OWNED BY {}.{}.{};\n",
+                                        seq_fqn, schema, self.table_name, dc.name
+                                    ));
+                                } else {
+                                    append(format!(
+                                        "ALTER TABLE {}.{} ADD COLUMN {}",
+                                        schema, self.table_name, def.def(pks.is_some())
+                                    ).as_str(), &mut sql, true);
+                                }
+                            } else {
+                                append(format!(
+                                    "ALTER TABLE {}.{} ADD COLUMN {}",
+                                    schema, self.table_name, def.def(pks.is_some())
+                                ).as_str(), &mut sql, false);
+                            }
                             let _ = ts.columns.insert(dc.get_name(), def);
                             exec = true;
                         } else {
@@ -1041,6 +1083,17 @@ END
 $do$;
 "#;
 
+
+/// Map serial pseudo-types to their base integer type.
+/// Returns `Some(base_type)` for serial/bigserial/smallserial, `None` otherwise.
+fn serial_to_base_type(col_type: &str) -> Option<&'static str> {
+    match col_type.to_lowercase().as_str() {
+        "serial" | "serial4" => Some("integer"),
+        "bigserial" | "serial8" => Some("bigint"),
+        "smallserial" | "serial2" => Some("smallint"),
+        _ => None,
+    }
+}
 
 /// Type of column type change
 #[derive(Debug, PartialEq)]
