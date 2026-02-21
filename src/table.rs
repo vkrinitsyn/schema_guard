@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
 use serde::Serialize;
+use tokio_postgres::error::DbError;
 use yaml_rust::Yaml;
 use yaml_rust::yaml::Array;
 
@@ -317,7 +318,6 @@ impl Table {
         dbc: &mut InfoSchemaType,
         db: &mut tokio_postgres::Transaction<'_>,
         schema: &String, // this
-        is_retry: bool,
         file: &str,
         dry_run: Option<&(dyn Fn(Vec<String>) -> Result<(), String> + Send + Sync)>,
         opt: &MigrationOptions,
@@ -338,7 +338,7 @@ impl Table {
                             append(format!(
                                 "ALTER TABLE {}.{} ADD COLUMN {}",
                                 schema, self.table_name, def.def(pks.is_some())
-                            ).as_str(), &mut sql, is_retry);
+                            ).as_str(), &mut sql, opt.with_ddl_retry);
                             let _ = ts.columns.insert(dc.get_name(), def);
                             exec = true;
                         } else {
@@ -361,7 +361,7 @@ impl Table {
                                             "ALTER TABLE {}.{} ALTER COLUMN {} TYPE {}",
                                             schema, self.table_name, dc.name, desired_def.column_type
                                         );
-                                        append(&alter_sql, &mut sql, is_retry);
+                                        append(&alter_sql, &mut sql, opt.with_ddl_retry);
                                         let _ = ts.columns.insert(dc.get_name(), desired_def);
                                         exec = true;
                                     }
@@ -372,7 +372,7 @@ impl Table {
                                             schema, self.table_name, dc.name, desired_def.column_type
                                         );
                                         if opt.with_size_cut {
-                                            append(&alter_sql, &mut sql, is_retry);
+                                            append(&alter_sql, &mut sql, opt.with_ddl_retry);
                                             let _ = ts.columns.insert(dc.get_name(), desired_def);
                                             exec = true;
                                         } else {
@@ -395,7 +395,7 @@ impl Table {
                                             schema, self.table_name, dc.name, desired_def.column_type, dc.name, desired_def.column_type
                                         );
                                         if opt.with_size_cut {
-                                            append(&alter_sql, &mut sql, is_retry);
+                                            append(&alter_sql, &mut sql, opt.with_ddl_retry);
                                             let _ = ts.columns.insert(dc.get_name(), desired_def);
                                             exec = true;
                                         } else {
@@ -427,7 +427,7 @@ impl Table {
                         if self.owner.len() > 0 && &self.owner != o {
                             append(format!("ALTER TABLE {}.{} OWNER TO {}",
                                            schema, self.table_name, self.owner
-                            ).as_str(), &mut sql, is_retry);
+                            ).as_str(), &mut sql, opt.with_ddl_retry);
                         }
                     }
                     if !opt.exclude_triggers {
@@ -501,10 +501,10 @@ impl Table {
                         // PK change requires with_index_drop since PK is backed by a unique index
                         if opt.with_index_drop {
                             if !drop_pk_sql.is_empty() {
-                                append(&drop_pk_sql, &mut sql, is_retry);
+                                append(&drop_pk_sql, &mut sql, opt.with_ddl_retry);
                             }
                             if !add_pk_sql.is_empty() {
-                                append(&add_pk_sql, &mut sql, is_retry);
+                                append(&add_pk_sql, &mut sql, opt.with_ddl_retry);
                             }
                             // Update dbc with new PK
                             ts.primary_key = if desired_pk.is_empty() {
@@ -643,7 +643,7 @@ impl Table {
                 append(format!(
                     "ALTER TABLE {}.{} OWNER TO {}",
                     schema, self.table_name, self.owner
-                ).as_str(), &mut sql, is_retry);
+                ).as_str(), &mut sql, opt.with_ddl_retry);
             }
             // }
             if !opt.exclude_triggers {
@@ -691,36 +691,46 @@ impl Table {
             }
             None => {
                 if exec {
-                    let source = if file.len() > 0 { format!(", source: {}", file) } else { "".to_string() };
                     if !sql.is_empty() {
                         #[cfg(feature = "slog")] log_debug("deploy SQL", &sql, file, schema);
                         let _ = db.batch_execute(sql.as_str()).await
-                            .map_err(|e| format!("DB execute [{}]: {} {}", sql, e, source))?;
+                            .map_err(|e| Self::format_it("DB execute", sql, e, file))?;
                     }
                     if !comments.is_empty() {
                         #[cfg(feature = "slog")] log_debug("deploy SQL", &comments, file, schema);
                         let _ = db.batch_execute(comments.as_str()).await
-                            .map_err(|e| format!("DB execute comments [{}]: {} {}", comments, e, source))?;
+                            .map_err(|e| Self::format_it("DB execute comments", comments, e, file))?;
                     }
                     if !indexes_sql.is_empty() {
                         #[cfg(feature = "slog")] log_debug("deploy SQL", &indexes_sql, file, schema);
                         let _ = db.batch_execute(indexes_sql.as_str()).await
-                            .map_err(|e| format!("DB execute indexes [{}]: {} {}", indexes_sql, e, source))?;
+                            .map_err(|e| Self::format_it("DB execute indexes", indexes_sql, e, file))?;
                     }
                     if !grants_sql.is_empty() {
                         #[cfg(feature = "slog")] log_debug("deploy SQL", &grants_sql, file, schema);
                         let _ = db.batch_execute(grants_sql.as_str()).await
-                            .map_err(|e| format!("DB execute grants [{}]: {} {}", grants_sql, e, source))?;
+                            .map_err(|e| Self::format_it("DB execute grants", grants_sql, e, file))?;
                     }
                     if !data.is_empty() {
                         #[cfg(feature = "slog")] log_debug("deploy SQL", &data, file, schema);
                         let _ = db.batch_execute(data.as_str()).await
-                            .map_err(|e| format!("DB execute data upserts [{}]: {} {}", data, e, source))?;
+                            .map_err(|e| Self::format_it("DB execute data upserts", data, e, file))?;
                     }
                 }
                 Ok(exec)
             }
         }
+    }
+
+    fn format_it(msg: &str, sql: String, e: tokio_postgres::Error, file: &str) -> String {
+        format!("{} [{}] {} {} \nThe error is: {}", msg, sql,
+                if file.len() > 0 { ", source: " } else { "" },
+                file,
+                match e.as_db_error() {
+                    None => e.to_string(),
+                    Some(e) => e.to_string()
+                }
+        )
     }
 
     fn insert(&self, data: &mut String, row: &Vec<String>, schema: &String) {
@@ -1088,7 +1098,7 @@ fn analyze_type_change(existing: &str, desired: &str) -> TypeChange {
             "int8" | "bigint" | "bigserial" | "serial8" => "int8".to_string(),
             "int2" | "smallint" | "smallserial" | "serial2" => "int2".to_string(),
             "float4" | "real" => "float4".to_string(),
-            "float8" | "double precision" | "double" => "float8".to_string(),
+            "float" | "float8" | "double precision" | "double" => "float8".to_string(),
             "bool" | "boolean" => "bool".to_string(),
             "varchar" | "character varying" => "varchar".to_string(),
             "char" | "character" | "bpchar" => "char".to_string(),

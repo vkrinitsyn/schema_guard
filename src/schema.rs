@@ -89,7 +89,6 @@ impl Schema {
     /// return statements to execute
     pub async fn deploy_all_tables(&self, schema: &mut InfoSchemaType,
                                    db: &mut tokio_postgres::Transaction<'_>,
-                                   retry: bool,
                                    dry_run: Option<&(dyn Fn(Vec<String>) -> Result<(), String> + Send + Sync)>,
                                    opt: &MigrationOptions) -> Result<usize, String> {
         let mut cnt = 0;
@@ -98,7 +97,7 @@ impl Schema {
             if t.is_template() {
                 continue;
             }
-            if t.deploy(schema, db, &self.schema_name, retry, self.file.as_str(), dry_run, opt).await? {
+            if t.deploy(schema, db, &self.schema_name, self.file.as_str(), dry_run, opt).await? {
                 cnt += 1;
             }
         }

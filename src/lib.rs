@@ -79,6 +79,7 @@ pub struct MigrationOptions {
     /// otherwise return exception (default)
     /// <li> default: false - return exception if no "with_xxx" and changes detected
     pub without_failfast: bool,
+    pub with_ddl_retry: bool,
 }
 
 pub fn get_schema() -> Vec<Yaml> {
@@ -95,7 +96,7 @@ pub async fn migrate1(schema: Yaml, db_url: &str) -> Result<usize, String> {
     tokio::spawn(async move { let _ = conn.await; });
     let mut tx = client.transaction()
         .await.map_err(|e| format!("transaction: {e}"))?;
-    let cnt = migrate(schema, &mut tx, true, None, "", &MigrationOptions::default()).await?;
+    let cnt = migrate(schema, &mut tx, None, "", &MigrationOptions::default()).await?;
     tx.commit().await.map_err(|e| format!("commit: {e}"))?;
     Ok(cnt)
 }
@@ -109,7 +110,7 @@ pub async fn migrate_opt(schema: Yaml, db_url: &str, opt: &MigrationOptions) -> 
     tokio::spawn(async move { let _ = conn.await; });
     let mut tx = client.transaction()
         .await.map_err(|e| format!("transaction: {e}"))?;
-    let cnt = migrate(schema, &mut tx, true, None, "", &opt).await?;
+    let cnt = migrate(schema, &mut tx, None, "", &opt).await?;
     tx.commit().await.map_err(|e| format!("commit: {e}"))?;
     Ok(cnt)
 }
@@ -117,7 +118,7 @@ pub async fn migrate_opt(schema: Yaml, db_url: &str, opt: &MigrationOptions) -> 
 /// main entry point to apply schema from yaml to the database
 /// return statements to execute
 ///
-pub async fn migrate(schema: Yaml, db: &mut tokio_postgres::Transaction<'_>, retry: bool,
+pub async fn migrate(schema: Yaml, db: &mut tokio_postgres::Transaction<'_>, 
                dry_run: Option<&(dyn Fn(Vec<String>) -> Result<(), String> + Sync + Send)>, file_name: &str,
                opt: &MigrationOptions
 ) -> Result<usize, String> {
@@ -130,11 +131,11 @@ pub async fn migrate(schema: Yaml, db: &mut tokio_postgres::Transaction<'_>, ret
     let mut info = load_info_schema(db_name.as_str(), db).await?;
     let schemas = parse_yaml_schema(schema, file_name)?;
     for s in &schemas.list {
-        cnt += s.deploy_all_tables(&mut info, db, retry, dry_run, opt).await?;
+        cnt += s.deploy_all_tables(&mut info, db, dry_run, opt).await?;
     }
 
     for s in &schemas.list {
-        cnt += s.deploy_all_fk(&schemas, &mut info, db, retry, dry_run).await?;
+        cnt += s.deploy_all_fk(&schemas, &mut info, db, opt.with_ddl_retry, dry_run).await?;
     }
 
     // let _ = db.commit().map_err(|e| format!("committing error: {}", e))?;
