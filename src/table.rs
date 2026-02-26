@@ -2,7 +2,6 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
 use serde::Serialize;
-use tokio_postgres::error::DbError;
 use yaml_rust::Yaml;
 use yaml_rust::yaml::Array;
 
@@ -385,11 +384,16 @@ impl Table {
                             exec = true;
                         } else {
                             // Column exists - check for type changes
-                            let existing_col = ts.columns.get(&dc.name).unwrap();
+                            // Extract scalar values immediately to release the immutable borrow
+                            // before any mutable borrow (ts.columns.insert) is needed.
+                            let (existing_type, existing_nullable) = {
+                                let existing_col = ts.columns.get(&dc.name).unwrap();
+                                (existing_col.column_type.to_lowercase(), existing_col.nullable)
+                            };
                             let desired_def = dc.column_def(schema, &self.table_name, file)?;
+                            let desired_nullable = desired_def.nullable;
 
                             // Normalize types for comparison
-                            let existing_type = existing_col.column_type.to_lowercase();
                             let desired_type = desired_def.column_type.to_lowercase();
 
                             if existing_type != desired_type {
@@ -457,6 +461,17 @@ impl Table {
                                         // No change needed
                                     }
                                 }
+                            }
+
+                            // Check nullability: DB has NOT NULL but schema is nullable -> drop constraint
+                            // Skip for primary key columns - they are always NOT NULL by definition
+                            if !existing_nullable && desired_nullable && !dc.is_pk() {
+                                let alter_sql = format!(
+                                    "ALTER TABLE {}.{} ALTER COLUMN {} DROP NOT NULL",
+                                    schema, self.table_name, dc.name
+                                );
+                                append(&alter_sql, &mut sql, opt.with_ddl_retry);
+                                exec = true;
                             }
                         }
                     }

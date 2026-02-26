@@ -45,6 +45,7 @@ One line of code:
 
 ```rust
     let _ = schema_guard::migrate1(schema_guard::load_schema_from_file("file.yaml").unwrap(), "postgresql://")?;
+
 ```
 
 Will create or upgrade existing Postgres database schema with desired tables without extra table creation.
@@ -53,6 +54,4 @@ Will create or upgrade existing Postgres database schema with desired tables wit
 > [!NOTE]
 Not recommended to integrate schema migrate into application for production use
 as such violate security concern and best practices.
-
-Please consider to use full-featured [SchemaGuard](https://www.dbinvent.com/rdbm/) (free for personal use)
 

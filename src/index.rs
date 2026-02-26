@@ -114,13 +114,15 @@ impl IndexBuilder {
             HashMap::new()
         };
 
-        for (idx_name, desired) in &self.index_groups {
-            // Generate actual index name - "+" means auto-generate
-            let actual_index_name = if idx_name == "+" || idx_name.is_empty() {
+        for (_idx_name, desired) in &self.index_groups {
+            // Generate actual index name - "+" in desired.name means auto-generate.
+            // Note: auto-index map keys use "__auto_" prefix, so we must check desired.name,
+            // not idx_name, to correctly detect auto-generated indexes.
+            let actual_index_name = if desired.name == "+" || desired.name.is_empty() {
                 let col_names: Vec<&str> = desired.columns.iter().map(|c| c.column_name.as_str()).collect();
                 format!("idx_{}_{}", table_name, col_names.join("_"))
             } else {
-                idx_name.clone()
+                desired.name.clone()
             };
 
             // Check if index exists and if it needs to be updated
@@ -129,6 +131,15 @@ impl IndexBuilder {
                     // Index exists and matches - skip
                     continue;
                 }
+            }
+
+            // Check if any existing index already covers the same columns (possibly under a
+            // different name). Prevents creating duplicate indexes on the same column set.
+            if existing_indexes.values().any(|ex| self.index_columns_match(desired, ex)) {
+                continue;
+            }
+
+            if let Some(_existing) = existing_indexes.get(&actual_index_name) {
                 let drop_sql = format!("DROP INDEX IF EXISTS {}.{};", schema, actual_index_name);
                 // Index exists but differs
                 if opt.with_index_drop {
@@ -222,6 +233,23 @@ impl IndexBuilder {
         }
 
         true
+    }
+
+    /// Check if an existing index already covers the same columns as the desired index.
+    /// Compares column names (in order), uniqueness, and index method — ignoring index name.
+    fn index_columns_match(&self, desired: &DesiredIndex, existing: &PgIndex) -> bool {
+        if desired.is_unique != existing.is_unique {
+            return false;
+        }
+        let desired_method = if desired.using.is_empty() { "btree" } else { &desired.using };
+        if desired_method != existing.index_method {
+            return false;
+        }
+        if desired.columns.len() != existing.columns.len() {
+            return false;
+        }
+        desired.columns.iter().zip(existing.columns.iter())
+            .all(|(d, e)| d.column_name == e.column_name)
     }
 
     /// Build CREATE INDEX SQL statement

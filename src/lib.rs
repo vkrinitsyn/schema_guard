@@ -79,6 +79,8 @@ pub struct MigrationOptions {
     /// otherwise return exception (default)
     /// <li> default: false - return exception if no "with_xxx" and changes detected
     pub without_failfast: bool,
+    /// if ddl statement execution failed, then 100 retry max with delay 1 sec, otherwise return error immediately, default: false
+    /// <li> default: false - do not try to retry
     pub with_ddl_retry: bool,
 }
 
@@ -118,7 +120,7 @@ pub async fn migrate_opt(schema: Yaml, db_url: &str, opt: &MigrationOptions) -> 
 /// main entry point to apply schema from yaml to the database
 /// return statements to execute
 ///
-pub async fn migrate(schema: Yaml, db: &mut tokio_postgres::Transaction<'_>, 
+pub async fn migrate(schema: Yaml, db: &mut tokio_postgres::Transaction<'_>,
                dry_run: Option<&(dyn Fn(Vec<String>) -> Result<(), String> + Sync + Send)>, file_name: &str,
                opt: &MigrationOptions
 ) -> Result<usize, String> {
