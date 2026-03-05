@@ -209,10 +209,17 @@ pub async fn load_info_schema(db_name: &str, db: &mut tokio_postgres::Transactio
 #[inline]
 async fn load_info_cc(db_name: &str, db: &mut tokio_postgres::Transaction<'_>) -> Result<InfoSchemaType, String> {
     let mut data: InfoSchemaType = Default::default();
-    let result = db.query("SELECT table_catalog, table_schema, table_name, column_name, column_default, is_nullable, \
-    data_type, udt_name, character_maximum_length, numeric_precision, numeric_scale, ordinal_position \
-     from information_schema.columns where table_schema not in ('pg_catalog', 'information_schema') and table_catalog = $1 \
-      order by 1,2,3, ordinal_position", &[&db_name])
+    let result = db.query(
+        "SELECT c.table_catalog, c.table_schema, c.table_name, c.column_name, c.column_default, c.is_nullable, \
+         c.data_type, c.udt_name, c.character_maximum_length, c.numeric_precision, c.numeric_scale, c.ordinal_position, \
+         a.atttypmod \
+         FROM information_schema.columns c \
+         JOIN pg_catalog.pg_class pc ON pc.relname = c.table_name AND pc.relkind IN ('r','v','m','p') \
+         JOIN pg_catalog.pg_namespace pn ON pn.nspname = c.table_schema AND pn.oid = pc.relnamespace \
+         JOIN pg_catalog.pg_attribute a ON a.attrelid = pc.oid AND a.attname = c.column_name \
+              AND a.attnum > 0 AND NOT a.attisdropped \
+         WHERE c.table_schema NOT IN ('pg_catalog', 'information_schema') AND c.table_catalog = $1 \
+         ORDER BY 1,2,3, c.ordinal_position", &[&db_name])
         .await
         .map_err(|e| format!("on loading information_schema [{}]: {}", db_name, e))?;
     let mut sort_order = 0;
@@ -229,6 +236,8 @@ async fn load_info_cc(db_name: &str, db: &mut tokio_postgres::Transaction<'_>) -
         let character_maximum_length: Option<i32> = r.get(8);
         let numeric_precision: Option<i32> = r.get(9);
         let numeric_scale: Option<i32> = r.get(10);
+        // col 11: ordinal_position (used for ORDER BY only)
+        let atttypmod: i32 = r.get(12);
         let mut data_type = if udt_name.len() == 0 { data_type.to_string() } else { udt_name.to_string() };
         // PostgreSQL prefixes array udt_name with '_' (e.g. _varchar for varchar[])
         let is_array = data_type.starts_with('_');
@@ -236,7 +245,11 @@ async fn load_info_cc(db_name: &str, db: &mut tokio_postgres::Transaction<'_>) -
             data_type = data_type[1..].to_string();
         }
         if data_type.to_lowercase().as_str() == "varchar" {
-            if let Some(varchar_len) = character_maximum_length {
+            // For array columns information_schema reports character_maximum_length as NULL;
+            // fall back to atttypmod (PostgreSQL stores length+4 there for varchar).
+            let varchar_len = character_maximum_length
+                .or_else(|| if is_array && atttypmod > 4 { Some(atttypmod - 4) } else { None });
+            if let Some(varchar_len) = varchar_len {
                 data_type.push_str(format!("({})", varchar_len).as_str());
             }
         } else {
