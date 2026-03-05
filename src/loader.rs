@@ -230,6 +230,11 @@ async fn load_info_cc(db_name: &str, db: &mut tokio_postgres::Transaction<'_>) -
         let numeric_precision: Option<i32> = r.get(9);
         let numeric_scale: Option<i32> = r.get(10);
         let mut data_type = if udt_name.len() == 0 { data_type.to_string() } else { udt_name.to_string() };
+        // PostgreSQL prefixes array udt_name with '_' (e.g. _varchar for varchar[])
+        let is_array = data_type.starts_with('_');
+        if is_array {
+            data_type = data_type[1..].to_string();
+        }
         if data_type.to_lowercase().as_str() == "varchar" {
             if let Some(varchar_len) = character_maximum_length {
                 data_type.push_str(format!("({})", varchar_len).as_str());
@@ -242,6 +247,9 @@ async fn load_info_cc(db_name: &str, db: &mut tokio_postgres::Transaction<'_>) -
                     }
                 }
             }
+        }
+        if is_array {
+            data_type.push_str("[]");
         }
         #[cfg(debug_assertions)]
         {
