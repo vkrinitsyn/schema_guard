@@ -537,7 +537,20 @@ impl Table {
                     let desired_pk = self.get_primary_key_columns();
                     let existing_pk = ts.primary_key.as_ref().map(|pk| pk.columns.clone()).unwrap_or_default();
 
-                    if desired_pk != existing_pk {
+                    // ABSENT MEANS UNCHANGED.
+                    //
+                    // A YAML table definition is incremental: it names what should
+                    // exist, not the complete desired state. Columns are already
+                    // treated that way - nothing in this file generates DROP COLUMN
+                    // for a column present in the database and absent from the YAML -
+                    // and the primary key must behave identically.
+                    //
+                    // Without this guard an incremental file that adds one column to
+                    // an existing table computes desired_pk = [] and reads as
+                    // "remove the primary key". sg never generates a DROP for
+                    // something merely absent; only an explicitly DIFFERENT
+                    // declaration is a change.
+                    if !desired_pk.is_empty() && desired_pk != existing_pk {
                         let pk_constraint_name = ts.primary_key.as_ref()
                             .map(|pk| pk.constraint_name.clone())
                             .unwrap_or_else(|| format!("{}_pkey", self.table_name));
