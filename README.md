@@ -47,11 +47,12 @@ One line of code:
     let _ = schema_guard::migrate1(schema_guard::load_schema_from_file("file.yaml").unwrap(), "postgresql://")?;
 
 ```
+> [!NOTE]
+This is a tokio implementation. for a standard - take a look at `std` branch of this repo.
+
 
 Will create or upgrade existing Postgres database schema with desired tables without extra table creation.
 
 
 > [!NOTE]
-Not recommended to integrate schema migrate into application for production use
-as such violate security concern and best practices.
-
+Feel free tot take a look at full features Postgres Schema management [tool](https://dbinvent.com/rdbm/)
