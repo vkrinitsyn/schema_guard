@@ -1,0 +1,27 @@
+# Dependabot: weekly updates of Schema Guard's Cargo dependencies - schema_guard on
+# the default branch, schema_guard_tokio on features/tokio. Security updates are
+# switched on in the repository's settings (Code security), not here.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    # one pull request for the minor and patch updates of a week; a major update
+    # comes on its own
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+  # schema_guard_tokio
+  - package-ecosystem: cargo
+    directory: /
+    target-branch: features/tokio
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    # one pull request for the minor and patch updates of a week; a major update
+    # comes on its own
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]

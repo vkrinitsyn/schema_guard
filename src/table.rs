@@ -2,8 +2,8 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
 use serde::Serialize;
-use yaml_rust::Yaml;
-use yaml_rust::yaml::Array;
+use yaml_rust2::Yaml;
+use yaml_rust2::yaml::Array;
 
 use crate::column::{Column, Trig};
 use crate::loader::{FKTable, InfoSchemaType, PgTable};

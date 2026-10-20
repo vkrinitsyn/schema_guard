@@ -1,5 +1,5 @@
 use serde::Serialize;
-use yaml_rust::Yaml;
+use yaml_rust2::Yaml;
 
 use crate::loader::PgColumnDfn;
 use crate::utils::Named;

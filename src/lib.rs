@@ -1,6 +1,14 @@
+//! SchemaGuard: a PostgreSQL schema declared in YAML, merged into a database.
+//!
+//! The complete tool is Schema Guard Enterprise (`sge`), built on this crate and
+//! just as free - MIT, no license key: a command line, versioned SQL scripts tracked
+//! in a history table, dry runs, ETL snapshots and loads, git as a script source,
+//! and YT Cluster support. See <https://www.dbinvent.com>.
+#![forbid(unsafe_code)]
+
 #[cfg(feature = "slog")]
 #[macro_use] extern crate slog;
-extern crate yaml_rust;
+extern crate yaml_rust2;
 
 use std::convert::TryFrom;
 use std::fs;
@@ -12,7 +20,7 @@ use lazy_static::lazy_static;
 
 
 use slog::Logger;
-use yaml_rust::YamlLoader;
+use yaml_rust2::YamlLoader;
 use yaml_validator::Validate;
 
 use schema::Schema;
@@ -20,7 +28,7 @@ use schema::Schema;
 use crate::loader::load_info_schema;
 use crate::utils::OrderedHashMap;
 
-use self::yaml_rust::Yaml;
+use self::yaml_rust2::Yaml;
 
 pub mod loader;
 pub mod table;
@@ -29,8 +37,11 @@ pub mod index;
 pub mod grant;
 pub mod schema;
 pub mod utils;
+mod yaml_validator;
 
 static SCHEMA_YAML: &'static str = include_str!("schema.yaml");
+const APP_NAME: &str = "SchemaGuard";
+const BANNER_MSG: &str = "provided by DBinvent.com | DBinvent.github.io \n Check SGE: SchemaGuardEnterprise for better experience (same license)";
 
 lazy_static! {
     pub(crate) static ref LOG: Arc<RwLock<Option<Logger>>> = Arc::new (RwLock::new(None));
@@ -52,6 +63,21 @@ pub(crate) fn log_debug(prefix: &str, msg: &String, file: &str, schema: &String)
     } else {
         println!("{} {}[{}] {}", prefix, file, schema, msg);
     }
+}
+
+#[cfg(feature = "slog")]
+pub(crate) fn log_info(msg: &String) {
+    let log = LOG.read().unwrap();
+    if let Some(l) = &*log {
+        debug!(l, "{} ", msg);
+    } else {
+        println!("{}", msg);
+    }
+}
+
+#[cfg(not(feature = "slog"))]
+pub(crate) fn log_info(msg: &String) {
+    println!("{}", msg);
 }
 
 #[derive(Debug, Clone, Default)]
@@ -124,6 +150,8 @@ pub async fn migrate(schema: Yaml, db: &mut tokio_postgres::Transaction<'_>,
                dry_run: Option<&(dyn Fn(Vec<String>) -> Result<(), String> + Sync + Send)>, file_name: &str,
                opt: &MigrationOptions
 ) -> Result<usize, String> {
+    log_info(&format!("{} {} {}", APP_NAME, env!("CARGO_PKG_VERSION"), BANNER_MSG));
+
     // let mut db = dbc.transaction().map_err(|e| format!("{}", e))?;
     let mut cnt = 0;
     // check db connection
@@ -206,7 +234,18 @@ pub fn parse_yaml_schema(yaml: Yaml, file_name: &str) -> Result<OrderedHashMap<S
 
 #[cfg(test)]
 mod tests {
-    use crate::{load_schema_from_file, parse_yaml_schema, MigrationOptions};
+    use crate::{load_schema_from_file, load_schema_from_src, parse_yaml_schema, MigrationOptions};
+
+    /// [yaml-validator] the vendored validator still guards the file format: a field
+    /// schema.yaml does not define is refused, by name, and a correct file passes
+    #[test]
+    fn a_file_with_an_unknown_field_is_refused() {
+        let file = |extra: &str| format!("database:\n  - schemaName: s\n    tables:\n      - table:\n          tableName: t\n{}          columns:\n            - column: {{ name: id, type: int }}\n", extra);
+        assert!(load_schema_from_src(file("")).is_ok());
+        let e = load_schema_from_src(file("          colour: red\n")).unwrap_err();
+        assert!(e.starts_with("Schema validation error") && e.contains("colour"), "{}", e);
+    }
+
     #[tokio::test]
     async fn test_schema() {
 

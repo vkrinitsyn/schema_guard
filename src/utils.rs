@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Serialize, Serializer};
 use serde::ser::SerializeSeq;
-use yaml_rust::Yaml;
+use yaml_rust2::Yaml;
 
 #[inline]
 pub fn as_str_esc(input: &Yaml, field: &str) -> String {

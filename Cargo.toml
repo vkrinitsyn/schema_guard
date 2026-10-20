@@ -1,12 +1,12 @@
 [package]
 name = "schema_guard_tokio"
-version = "1.10.2"
+version = "2.0.0"
 authors = ["V.Krinitsyn <V.Krinitsyn@gmail.com>"]
 edition = "2018"
 description = "Schema Guard: YAML based Relation Database Schema Management tool for Postgres"
 homepage = "https://github.com/vkrinitsyn/schema_guard"
 readme = "README.md"
-documentation = "https://www.dbinvent.com/rdbm/guide/getting-started#declarative"
+documentation = "https://www.dbinvent.com/sge/guide/getting-started#declarative"
 repository = "https://github.com/vkrinitsyn/schema_guard"
 license = "MIT"
 
@@ -16,14 +16,17 @@ path = "src/lib.rs"
 
 [dependencies]
 
-slog = { version = "^2.7", features=["max_level_debug"] }
-lazy_static = "^1.4"
+slog = { version = "^2.8", features=["max_level_debug"] }
+lazy_static = "^1.5"
 serde = { version = "^1.0", features = ["derive"] }
 serde_json = "^1.0"
-yaml-rust = "^0.4"
-yaml-validator = "0.2.0"
-tokio = { version = "^1.36", features = ["test-util", "full"]}
-tokio-postgres = { version = "^0.7"}
+# default features add only encoding_rs, for byte input; schema_guard parses strings
+yaml-rust2 = { version = "^0.13", default-features = false }
+# yaml-validator 0.2.0, vendored in src/yaml_validator, needs these two
+regex = "^1.11"
+thiserror = "^1.0"
+tokio = { version = "^1.54", features = ["test-util", "full"]}
+tokio-postgres = { version = "^0.7.18"}
 
 [features]
 #default = ["slog"]

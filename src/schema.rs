@@ -1,6 +1,6 @@
 // use postgres::Transaction;
 use serde::Serialize;
-use yaml_rust::Yaml;
+use yaml_rust2::Yaml;
 
 use crate::loader::InfoSchemaType;
 use crate::table::Table;
