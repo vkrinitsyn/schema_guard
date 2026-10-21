@@ -1,4 +1,7 @@
-## SchemaGuard
+## SchemaGuard (tokio)
+
+> [!NOTE]
+> Standard non tokio edition available in /std branch:  https://github.com/vkrinitsyn/schema_guard/tree/std
 
 > [!TIP]
 > **Schema Guard Enterprise (`sge`)** is the complete tool built on this crate, and

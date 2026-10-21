@@ -25,3 +25,8 @@ updates:
     groups:
       minor-and-patch:
         update-types: [minor, patch]
+  # the actions .github/workflows runs (audit.yml: cargo audit and cargo geiger)
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
