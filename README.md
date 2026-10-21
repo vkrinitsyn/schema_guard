@@ -4,6 +4,7 @@
 > Standard non tokio edition available in /std branch:  https://github.com/vkrinitsyn/schema_guard/tree/std
 
 > [!TIP]
+> Also Available:
 > **Schema Guard Enterprise (`sge`)** is the complete tool built on this crate, and
 > just as free: MIT, no license key. It adds a command line, versioned SQL scripts
 > tracked in a history table, dry runs, ETL snapshots and loads, git as a script
