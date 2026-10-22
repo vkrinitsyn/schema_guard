@@ -1,14 +1,14 @@
 ## SchemaGuard (tokio)
 
 > [!NOTE]
-> Standard non tokio edition available in /std branch:  https://github.com/vkrinitsyn/schema_guard/tree/std
+> Standard non tokio edition available in `std` branch:  https://github.com/vkrinitsyn/schema_guard/tree/std
 
 > [!TIP]
-> Also Available:
-> **Schema Guard Enterprise (`sge`)** is the complete tool built on this crate, and
+> Also available the **Schema Guard Enterprise  ([sge](https://dbinvent.com/sge))** - is the complete tool built on this
+> [crate](https://crates.io/crates/schema_guard), and
 > just as free: MIT, no license key. It adds a command line, versioned SQL scripts
 > tracked in a history table, dry runs, ETL snapshots and loads, git as a script
-> source, and YT Cluster support. See [dbinvent.com](https://www.dbinvent.com).
+> source, and YT Cluster support. See [dbinvent.com](https://dbinvent.com).
 
 ### Merging YAML defined schema and data into PostgreSQL database
 
@@ -71,10 +71,6 @@ This is a tokio implementation. for a standard - take a look at `std` branch of 
 
 Will create or upgrade existing Postgres database schema with desired tables without extra table creation.
 
-
-> [!NOTE]
-Feel free to take a look at Schema Guard Enterprise (`sge`), the full-featured
-Postgres schema management tool built on this crate - just as free: [dbinvent.com](https://www.dbinvent.com)
 
 ### Checks
 
