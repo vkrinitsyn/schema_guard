@@ -25,7 +25,7 @@ yaml-rust2 = { version = "^0.13", default-features = false }
 # yaml-validator 0.2.0, vendored in src/yaml_validator, needs these two
 regex = "^1.11"
 thiserror = "^2.0"
-tokio = { version = "^1.54", features = ["test-util", "full"]}
+tokio = { version = "^1.54.1", features = ["test-util", "full"]}
 tokio-postgres = { version = "^0.7.18"}
 
 [features]
