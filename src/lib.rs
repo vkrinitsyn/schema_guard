@@ -34,7 +34,7 @@ use crate::utils::OrderedHashMap;
 use self::yaml_rust2::Yaml;
 
 pub use i18n::set_lang;
-pub use error::{pg_error, set_lc_messages, DeployError, DeployStep};
+pub use error::{pg_error, pg_error_in, set_lc_messages, DeployError, DeployStep};
 
 // first: tr! is declared there, for the modules below
 #[macro_use]

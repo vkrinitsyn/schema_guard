@@ -182,3 +182,17 @@ pg.where:
   de: "ZUSAMMENHANG: %{text}"
   zh: "上下文：%{text}"
   ja: "コンテキスト：%{text}"
+pg.line:
+  en: "LINE %{line}: %{text}"
+  ru: "СТРОКА %{line}: %{text}"
+  fr: "LIGNE %{line} : %{text}"
+  de: "ZEILE %{line}: %{text}"
+  zh: "第%{line}行：%{text}"
+  ja: "行 %{line}：%{text}"
+pg.position:
+  en: "POSITION: %{position}"
+  ru: "ПОЗИЦИЯ: %{position}"
+  fr: "POSITION : %{position}"
+  de: "POSITION: %{position}"
+  zh: "位置：%{position}"
+  ja: "位置：%{position}"

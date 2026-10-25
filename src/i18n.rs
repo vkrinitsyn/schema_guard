@@ -9,6 +9,10 @@
 //! The messages are in locales/*.yml, each with every language: en, ru, and - not
 //! reviewed - fr, de, zh (Simplified Chinese), ja. An error's starts with its code,
 //! `SG-Ennn`, the same in every language, so it can be looked up whatever the language.
+//!
+//! The language is the process's, not a call's: a program serving users of several
+//! languages at once gets schema_guard's messages in one of them. An error's code, and
+//! a deploy's DeployError, are the same in all - say them in the user's language there.
 
 use std::sync::RwLock;
 
@@ -22,7 +26,8 @@ lazy_static! {
 }
 
 /// The language of the messages from here on: `en`, `ru`, `fr`, `de`, `zh`, `ja`, or a
-/// locale of one (`ru_RU.UTF-8`). Wins over the logger's and LANG.
+/// locale of one (`ru_RU.UTF-8`). Wins over the logger's and LANG; an empty one is
+/// none, and leaves them to it.
 pub fn set_lang(lang: &str) {
     if let Ok(mut l) = LANG.write() {
         *l = Some(language(lang));
@@ -46,10 +51,12 @@ pub(crate) fn lang() -> String {
     )
 }
 
+/// the first language given - an empty one is not given
 fn choose(set: Option<String>, logger: Option<String>, env: Option<String>) -> String {
-    set.or(logger)
-        .or_else(|| env.map(|e| language(&e)))
-        .filter(|l| !l.is_empty())
+    let given = |l: &String| !l.is_empty();
+    set.filter(given)
+        .or(logger.filter(given))
+        .or_else(|| env.map(|e| language(&e)).filter(given))
         .unwrap_or_else(|| "en".to_string())
 }
 
@@ -97,6 +104,9 @@ mod tests {
         assert_eq!(choose(None, None, s("ru_RU.UTF-8")), "ru");
         assert_eq!(choose(None, None, None), "en");
         assert_eq!(choose(None, None, s("")), "en");
+        // an empty one is none: it leaves the language to the next
+        assert_eq!(choose(s(""), s("fr"), s("ru_RU.UTF-8")), "fr");
+        assert_eq!(choose(s(""), s(""), s("ru_RU.UTF-8")), "ru");
         assert_eq!(language("JA_jp"), "ja");
     }
 

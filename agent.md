@@ -51,6 +51,18 @@ the crate generate the DDL.
 `migrate1` / `migrate_opt` connect without TLS. For TLS, or to apply several
 files atomically, open the transaction yourself and call `migrate`.
 
+### Errors and language (`src/error.rs`, `src/i18n.rs`)
+
+| function | what |
+|---|---|
+| `Table::deploy_pg`, `deploy_fk_pg`, `Schema::deploy_all_tables_pg`, `deploy_all_fk_pg` | as the `String` versions, but return `DeployError`: `Pg { step, sql, file, err }` keeps the native `tokio_postgres::Error` (also its `source()`), `Message(String)` is schema_guard's own |
+| `pg_error(&err)` | a Postgres error in full: severity, SQLSTATE, message, position, DETAIL, HINT, WHERE; a client error with its cause chain |
+| `pg_error_in(&err, sql)` | the same, with the line of `sql` the server points at and a `^` under it, as psql prints it |
+| `set_lang(lang)` | the language of schema_guard's messages; else the logger's `o!("lang" => ..)`, else `LANG`, else English. An empty value counts as unset. **Global** to the process, not per call |
+| `set_lc_messages(&client, lang)` | asks the server for its messages in `lang` when the role may set `lc_messages`; ignores a refusal. Call it **before** `BEGIN`: a refused `SET` aborts an open transaction |
+
+Error codes (`SG-Ennn`) are the same in every language.
+
 Placeholders are the caller's job. For example, a schema stored with
 `@extschema@` gets it replaced with the target schema name before
 `load_schema_from_src`.
