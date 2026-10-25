@@ -65,14 +65,14 @@ pub fn try_into_usize<'a, N: Default + PartialOrd + TryInto<usize>>(
 ) -> Result<usize, SchemaError<'a>> {
     if number < N::default() {
         return Err(SchemaErrorKind::MalformedField {
-            error: "must be a non-negative integer value".into(),
+            error: tr!("validation.non_negative"),
         }
         .into());
     }
 
     N::try_into(number).map_err(|_| {
         SchemaErrorKind::MalformedField {
-            error: "value does not fit in a usize on this system".into(),
+            error: tr!("validation.usize"),
         }
         .into()
     })
@@ -198,10 +198,7 @@ impl YamlUtils for Yaml {
 
         if conflicts.len() > 1 {
             return Err(SchemaErrorKind::MalformedField {
-                error: format!(
-                    "conflicting constraints: {} cannot be used at the same time",
-                    conflicts.join(", ")
-                ),
+                error: tr!("validation.conflicting", fields = conflicts.join(", ")),
             }
             .into());
         }

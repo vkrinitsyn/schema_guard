@@ -113,10 +113,8 @@ impl<'a> GrantBuilder<'a> {
                         // Show skipped SQL
                         let _ = writeln!(skipped_sql, "-- SKIPPED (with_revoke=false): {}", revoke_stmt.trim());
                     } else {
-                        return Err(format!(
-                            "Grant changes detected for {} on {}.{} but without_failfast is enabled. SQL: {}",
-                            grantee, schema, self.table_name, revoke_stmt.trim()
-                        ));
+                        return Err(tr!("grant.changed", grantee = grantee,
+                            table = format!("{}.{}", schema, self.table_name), sql = revoke_stmt.trim()));
                     }
                 }
             }
@@ -180,10 +178,8 @@ impl<'a> GrantBuilder<'a> {
                             // Show skipped SQL
                             let _ = writeln!(skipped_sql, "-- SKIPPED (with_revoke=false): {}", revoke_stmt.trim());
                         } else {
-                            return Err(format!(
-                                "Grant removal detected for {} on {}.{} but without_failfast is enabled. SQL: {}",
-                                grantee, schema, self.table_name, revoke_stmt.trim()
-                            ));
+                            return Err(tr!("grant.removed", grantee = grantee,
+                                table = format!("{}.{}", schema, self.table_name), sql = revoke_stmt.trim()));
                         }
                     }
                 }

@@ -208,10 +208,7 @@ impl Column {
         file: &str,
     ) -> Result<PgColumnDfn, String> {
         if self.column_type.len() == 0 {
-            Err(format!(
-                "Error column definition on table: {}.{} column {} file {}",
-                schema, table_name, self.name, file
-            ))
+            Err(tr!("column.definition", table = format!("{}.{}", schema, table_name), column = self.name, file = file))
         } else {
             let c = self.constraint.clone();
             Ok(PgColumnDfn {

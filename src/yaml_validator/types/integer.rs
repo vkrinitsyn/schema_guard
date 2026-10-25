@@ -55,7 +55,7 @@ impl<'schema> TryFrom<&'schema Yaml> for SchemaInteger {
         if let (Some(lower), Some(upper)) = (&minimum, &maximum) {
             if !lower.has_span(upper) {
                 return Err(SchemaErrorKind::MalformedField {
-                    error: "range given for real value spans 0 possible values".into(),
+                    error: tr!("validation.zero_range"),
                 }
                 .into());
             }
@@ -67,7 +67,7 @@ impl<'schema> TryFrom<&'schema Yaml> for SchemaInteger {
             .and_then(|number| {
                 if number <= 0 {
                     Err(SchemaErrorKind::MalformedField {
-                        error: "must be greater than zero".into(),
+                        error: tr!("validation.greater_than_zero"),
                     }
                     .with_path_name("multipleOf"))
                 } else {
@@ -95,7 +95,7 @@ impl<'yaml, 'schema: 'yaml> Validate<'yaml, 'schema> for SchemaInteger {
         if let Some(minimum) = &self.minimum {
             if !minimum.is_greater(&value) {
                 return Err(ValidationErrorKind::ValidationError {
-                    error: "value violates lower limit constraint",
+                    error: "validation.lower_limit",
                 }
                 .into());
             }
@@ -104,7 +104,7 @@ impl<'yaml, 'schema: 'yaml> Validate<'yaml, 'schema> for SchemaInteger {
         if let Some(maximum) = &self.maximum {
             if !maximum.is_lesser(&value) {
                 return Err(ValidationErrorKind::ValidationError {
-                    error: "value violates upper limit constraint",
+                    error: "validation.upper_limit",
                 }
                 .into());
             }
@@ -113,7 +113,7 @@ impl<'yaml, 'schema: 'yaml> Validate<'yaml, 'schema> for SchemaInteger {
         if let Some(multiple_of) = &self.multiple_of {
             if value.rem_euclid(*multiple_of) != 0 {
                 return Err(ValidationErrorKind::ValidationError {
-                    error: "value must be a multiple of the multipleOf field",
+                    error: "validation.multiple_of",
                 }
                 .into());
             }
@@ -186,7 +186,7 @@ mod tests {
                 minimum: 10
             "#)).unwrap_err(),
             SchemaErrorKind::MalformedField {
-                error: "conflicting constraints: minimum, exclusiveMinimum cannot be used at the same time".into()
+                error: tr!("validation.conflicting", fields = "minimum, exclusiveMinimum")
             }.into()
         )
     }
@@ -215,7 +215,7 @@ mod tests {
             ))
             .unwrap_err(),
             SchemaErrorKind::MalformedField {
-                error: "range given for real value spans 0 possible values".into()
+                error: tr!("validation.zero_range")
             }
             .into()
         )
@@ -309,7 +309,7 @@ mod tests {
                 .validate(&Context::default(), &load_simple("10"))
                 .unwrap_err(),
             ValidationErrorKind::ValidationError {
-                error: "value violates lower limit constraint"
+                error: "validation.lower_limit"
             }
             .into()
         );
@@ -345,7 +345,7 @@ mod tests {
                 .validate(&Context::default(), &load_simple("5"))
                 .unwrap_err(),
             ValidationErrorKind::ValidationError {
-                error: "value violates lower limit constraint"
+                error: "validation.lower_limit"
             }
             .into()
         );
@@ -366,7 +366,7 @@ mod tests {
                 .validate(&Context::default(), &load_simple("10"))
                 .unwrap_err(),
             ValidationErrorKind::ValidationError {
-                error: "value violates upper limit constraint"
+                error: "validation.upper_limit"
             }
             .into()
         );
@@ -402,7 +402,7 @@ mod tests {
                 .validate(&Context::default(), &load_simple("20"))
                 .unwrap_err(),
             ValidationErrorKind::ValidationError {
-                error: "value violates upper limit constraint"
+                error: "validation.upper_limit"
             }
             .into()
         );
@@ -423,7 +423,7 @@ mod tests {
                 .validate(&Context::default(), &load_simple("10"))
                 .unwrap_err(),
             ValidationErrorKind::ValidationError {
-                error: "value must be a multiple of the multipleOf field"
+                error: "validation.multiple_of"
             }
             .into()
         );

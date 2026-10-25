@@ -133,9 +133,9 @@ impl<T: Named + Serialize> OrderedHashMap<T> {
     pub fn append(&mut self, value: T) -> Result<(), String> {
         let key_name = value.get_name();
         if key_name.len() == 0 {
-            Err("Empty".into())
+            Err(tr!("utils.empty_name"))
         } else if self.map.contains_key(&key_name) {
-            Err(format!("Duplicate {}", key_name))
+            Err(tr!("utils.duplicate", name = key_name))
         } else {
             self.map.insert(key_name, self.list.len());
             self.list.push(value);

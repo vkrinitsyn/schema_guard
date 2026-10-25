@@ -26,7 +26,7 @@ impl<'schema> TryFrom<&'schema Yaml> for SchemaAnyOf<'schema> {
 
         if items.is_empty() {
             return Err(SchemaErrorKind::MalformedField {
-                error: "anyOf modifier requires an array of schemas to validate against".to_owned(),
+                error: tr!("validation.any_of_array"),
             }
             .with_path_name("anyOf"));
         }

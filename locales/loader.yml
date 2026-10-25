@@ -1,0 +1,16 @@
+# [i18n] see lib.yml
+_version: 2
+loader.catalog_db:
+  en: "SG-E020 on loading %{what} of database %{db}: %{err}"
+  ru: "SG-E020 при чтении %{what} базы %{db}: %{err}"
+  fr: "SG-E020 lors de la lecture de %{what} de la base %{db} : %{err}"
+  de: "SG-E020 beim Lesen von %{what} der Datenbank %{db}: %{err}"
+  zh: "SG-E020 读取数据库 %{db} 的 %{what} 时出错：%{err}"
+  ja: "SG-E020 データベース %{db} の %{what} の読み込み中：%{err}"
+loader.catalog:
+  en: "SG-E021 on loading %{what}: %{err}"
+  ru: "SG-E021 при чтении %{what}: %{err}"
+  fr: "SG-E021 lors de la lecture de %{what} : %{err}"
+  de: "SG-E021 beim Lesen von %{what}: %{err}"
+  zh: "SG-E021 读取 %{what} 时出错：%{err}"
+  ja: "SG-E021 %{what} の読み込み中：%{err}"

@@ -221,7 +221,7 @@ async fn load_info_cc(db_name: &str, db: &mut tokio_postgres::Transaction<'_>) -
          WHERE c.table_schema NOT IN ('pg_catalog', 'information_schema') AND c.table_catalog = $1 \
          ORDER BY 1,2,3, c.ordinal_position", &[&db_name])
         .await
-        .map_err(|e| format!("on loading information_schema [{}]: {}", db_name, e))?;
+        .map_err(|e| tr!("loader.catalog_db", what = "information_schema.columns", db = db_name, err = crate::pg_error(&e)))?;
     let mut sort_order = 0;
     for r in result {
         sort_order += 1;
@@ -310,7 +310,7 @@ async fn load_info_cc(db_name: &str, db: &mut tokio_postgres::Transaction<'_>) -
     WHERE tabs.table_schema not in ('pg_catalog', 'information_schema') AND tabs.table_catalog = $1
      and tabs.table_name in ({})
     ) as ist WHERE ist.table_comment is not null order by 1,2", tables).as_str(), &[&db_name]).await
-                .map_err(|e| format!("on loading table_comment from information_schema [{}]: {}", db_name, e))?;
+                .map_err(|e| tr!("loader.catalog_db", what = "information_schema.tables", db = db_name, err = crate::pg_error(&e)))?;
             for r in result {
                 // let table_schema: &str = r.get(0);
                 let table_name: &str = r.get(1);
@@ -322,7 +322,7 @@ async fn load_info_cc(db_name: &str, db: &mut tokio_postgres::Transaction<'_>) -
 
             let result = db.query("SELECT schemaname, tablename, tableowner from pg_tables where schemaname = $1 ",
                                   &[&schema]).await
-                .map_err(|e| format!("on loading table_owner from information_schema [{}]: {}", db_name, e))?;
+                .map_err(|e| tr!("loader.catalog_db", what = "pg_tables", db = db_name, err = crate::pg_error(&e)))?;
             for r in result {
                 // let table_schema: &str = r.get(0);
                 let table_name: &str = r.get(1);
@@ -338,7 +338,7 @@ FROM information_schema.columns cols
 WHERE cols.table_schema not in ('pg_catalog', 'information_schema')  AND cols.table_catalog = $1
  AND cols.table_name in ({})
 ) as iss where iss.column_comment is not null", tables).as_str(), &[&db_name]).await
-                .map_err(|e| format!("on loading table_comment from information_schema [{}]: {}", db_name, e))?;
+                .map_err(|e| tr!("loader.catalog_db", what = "information_schema.columns", db = db_name, err = crate::pg_error(&e)))?;
             for r in result {
                 // let table_schema: &str = r.get(0);
                 let table_name: &str = r.get(1);
@@ -356,7 +356,7 @@ WHERE cols.table_schema not in ('pg_catalog', 'information_schema')  AND cols.ta
                     JOIN pg_class pc on pc.oid = i.indrelid
                     JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
                     WHERE (i.indisprimary or i.indisunique) and i.indrelid in ({})", query).as_str(), &[]).await
-                .map_err(|e| format!("on loading information_schema pk/uniq: {}", e))?;
+                .map_err(|e| tr!("loader.catalog", what = "pg_index", err = crate::pg_error(&e)))?;
             for r in result {
                 let table_name: &str = r.get(0);
                 let col_name: &str = r.get(1);
@@ -423,7 +423,7 @@ async fn load_info_tg(_db_name: &str, db: &mut tokio_postgres::Transaction<'_>, 
            AND n.nspname NOT IN ('pg_catalog', 'information_schema')
          ORDER BY n.nspname, c.relname, t.tgname",
         &[]
-    ).await.map_err(|e| format!("on loading pg_trigger: {}", e))?;
+    ).await.map_err(|e| tr!("loader.catalog", what = "pg_trigger", err = crate::pg_error(&e)))?;
 
     for r in result {
         let schema_name: &str = r.get(0);
@@ -463,7 +463,7 @@ async fn load_info_fk(db_name: &str, db: &mut tokio_postgres::Transaction<'_>, d
  JOIN information_schema.constraint_column_usage AS ccu ON ccu.constraint_name = tc.constraint_name
  join information_schema.referential_constraints as rc on tc.constraint_name = rc.constraint_name
  WHERE constraint_type = 'FOREIGN KEY' and tc.table_catalog = $1", &[&db_name]).await {
-        Err(e) => Err(format!("on loading information_schema.fk: {}", e)),
+        Err(e) => Err(tr!("loader.catalog", what = "information_schema.table_constraints", err = crate::pg_error(&e))),
         Ok(result) => {
             for r in result {
                 let table_schema: &str = r.get(0);
@@ -545,7 +545,7 @@ async fn load_info_idx(db_name: &str, db: &mut tokio_postgres::Transaction<'_>, 
          WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
          ORDER BY n.nspname, t.relname, i.relname, array_position(ix.indkey, a.attnum)",
         &[&db_name]
-    ).await.map_err(|e| format!("on loading pg_indexes: {}", e))?;
+    ).await.map_err(|e| tr!("loader.catalog", what = "pg_index", err = crate::pg_error(&e)))?;
 
     // Group results by index
     let mut current_index: Option<(String, String, String, PgIndex)> = None;
@@ -637,7 +637,7 @@ async fn load_info_pk(db_name:  &str, db: &mut tokio_postgres::Transaction<'_>, 
            AND n.nspname NOT IN ('pg_catalog', 'information_schema')
          ORDER BY n.nspname, t.relname, array_position(c.conkey, a.attnum)",
             &[&db_name]
-    ).await.map_err(|e| format!("on loading primary keys: {}", e))?;
+    ).await.map_err(|e| tr!("loader.catalog", what = "pg_constraint", err = crate::pg_error(&e)))?;
 
     // Group results by table
     let mut current_pk: Option<(String, String, String, Vec<String>)> = None; // schema, table, constraint_name, columns
@@ -709,7 +709,7 @@ async fn load_info_grant(db_name: &str, db: &mut tokio_postgres::Transaction<'_>
            AND table_catalog = $1
          ORDER BY table_schema, table_name, grantee",
         &[&db_name]
-    ).await.map_err(|e| format!("on loading table_privileges: {}", e))?;
+    ).await.map_err(|e| tr!("loader.catalog", what = "information_schema.table_privileges", err = crate::pg_error(&e)))?;
 
     for r in result {
         let schema_name: &str = r.get(0);
@@ -750,7 +750,7 @@ from information_schema.tables t
 join pg_catalog.pg_class c on (t.table_name = c.relname)
 join pg_catalog.pg_user u on (c.relowner = u.usesysid)
 where t.table_schema = $1 and t.table_catalog = $2 ", &[&schema_name, &db_name]).await {
-                    Err(e) => { return Err(format!("on loading information_schema.owner: {}", e)); }
+                    Err(e) => { return Err(tr!("loader.catalog", what = "information_schema.tables", err = crate::pg_error(&e))); }
                     Ok(result) => {
                         for r in result {
                             let table_name: &str = r.get(0);
@@ -763,7 +763,7 @@ where t.table_schema = $1 and t.table_catalog = $2 ", &[&schema_name, &db_name])
             }
             Ok(res)
         }
-        Err(e) => Err(format!("on loading information schema owners: {}", e)),
+        Err(e) => Err(tr!("loader.catalog", what = "information_schema.schemata", err = crate::pg_error(&e))),
     }
 }
 

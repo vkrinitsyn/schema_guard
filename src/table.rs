@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use crate::error::{DeployError, DeployStep};
 use std::fmt::Write;
 
 use serde::Serialize;
@@ -192,21 +193,8 @@ impl Table {
                     if let Some(_name) = c["name"].as_str() {
                         let yc = Column::new(c);
                         if let Err(e) = columns.append(yc) {
-                            return Err(format!(
-                                "{} (column name) {}/{} on table: {}{}{}",
-                                e,
-                                i,
-                                cls.len(),
-                                table_name,
-                                match file {
-                                    None => "",
-                                    Some(_) => ", found in file: ",
-                                },
-                                match file {
-                                    None => "",
-                                    Some(f) => f.as_str(),
-                                },
-                            ));
+                            return Err(tr!("table.column", err = e, index = i, count = cls.len(), table = table_name,
+                                in_file = Self::in_file(file)));
                         };
                     }
                     i += 1;
@@ -221,19 +209,8 @@ impl Table {
                     if let Some(name) = t["name"].as_str() {
                         if name.len() > 0 {
                             if let Err(_) = triggers.append(Trig::new(t)) {
-                                return Err(format!(
-                                    "Duplicate trigger name: {} on table: {}{}{}",
-                                    name,
-                                    table_name,
-                                    match file {
-                                        None => "",
-                                        Some(_) => ", found in file: ",
-                                    },
-                                    match file {
-                                        None => "",
-                                        Some(f) => f.as_str(),
-                                    },
-                                ));
+                                return Err(tr!("table.duplicate_trigger", name = name, table = table_name,
+                                    in_file = Self::in_file(file)));
                             };
                         }
                     }
@@ -247,22 +224,13 @@ impl Table {
                 match pv.as_str() {
                     "RANGE" | "LIST" | "HASH" => {}
                     _ => {
-                        return Err(format!(
-                            "Invalid partition_by value '{}' on column '{}' in table '{}'. Expected one of: RANGE, LIST, HASH{}{}",
-                            pv, col.name, table_name,
-                            match file { None => "", Some(_) => ", found in file: " },
-                            match file { None => "", Some(f) => f.as_str() },
-                        ));
+                        return Err(tr!("table.partition_value", value = pv, column = col.name, table = table_name,
+                            in_file = Self::in_file(file)));
                     }
                 }
                 partition_count += 1;
                 if partition_count > 1 {
-                    return Err(format!(
-                        "Only one column can have partition_by on table '{}'. Found multiple columns with partition_by{}{}",
-                        table_name,
-                        match file { None => "", Some(_) => ", found in file: " },
-                        match file { None => "", Some(f) => f.as_str() },
-                    ));
+                    return Err(tr!("table.partition_many", table = table_name, in_file = Self::in_file(file)));
                 }
                 // Auto-create index if none declared
                 if col.index.is_none() {
@@ -310,9 +278,23 @@ impl Table {
     }
 
 
-    /// build a create or alter sql
-    #[allow(unused_mut)]
+    /// build a create or alter sql - deploy_pg, a statement Postgres refused said as a message
     pub async fn deploy(
+        &self,
+        dbc: &mut InfoSchemaType,
+        db: &mut tokio_postgres::Transaction<'_>,
+        schema: &String,
+        file: &str,
+        dry_run: Option<&(dyn Fn(Vec<String>) -> Result<(), String> + Send + Sync)>,
+        opt: &MigrationOptions,
+    ) -> Result<bool, String> {
+        self.deploy_pg(dbc, db, schema, file, dry_run, opt).await.map_err(|e| e.to_string())
+    }
+
+    /// build a create or alter sql, and run it: a statement Postgres refuses is returned
+    /// as its native error (error.rs)
+    #[allow(unused_mut)]
+    pub async fn deploy_pg(
         &self,
         dbc: &mut InfoSchemaType,
         db: &mut tokio_postgres::Transaction<'_>,
@@ -320,7 +302,7 @@ impl Table {
         file: &str,
         dry_run: Option<&(dyn Fn(Vec<String>) -> Result<(), String> + Send + Sync)>,
         opt: &MigrationOptions,
-    ) -> Result<bool, String> {
+    ) -> Result<bool, DeployError> {
         let mut sql = String::new();
         let mut comments = String::new();
         let mut exec = false;
@@ -427,10 +409,9 @@ impl Table {
                                                     "-- SKIPPED (with_size_cut=false): {};\n-- Column {} type change from {} to {}",
                                                     alter_sql, dc.name, existing_type, desired_type);
                                             } else {
-                                                return Err(format!(
-                                                    "Column {} on {}.{} type change from {} to {} requires size reduction but with_size_cut is disabled. SQL: {};",
-                                                    dc.name, schema, self.table_name, existing_type, desired_type, alter_sql
-                                                ));
+                                                return Err(tr!("table.size_cut", column = dc.name,
+                                                    table = format!("{}.{}", schema, self.table_name),
+                                                    from = existing_type, to = desired_type, sql = alter_sql).into());
                                             }
                                         }
                                     }
@@ -450,10 +431,9 @@ impl Table {
                                                     "-- SKIPPED (with_size_cut=false): {};\n-- Column {} incompatible type change from {} to {}",
                                                     alter_sql, dc.name, existing_type, desired_type);
                                             } else {
-                                                return Err(format!(
-                                                    "Column {} on {}.{} has incompatible type change from {} to {} but with_size_cut is disabled. SQL: {};",
-                                                    dc.name, schema, self.table_name, existing_type, desired_type, alter_sql
-                                                ));
+                                                return Err(tr!("table.type_change", column = dc.name,
+                                                    table = format!("{}.{}", schema, self.table_name),
+                                                    from = existing_type, to = desired_type, sql = alter_sql).into());
                                             }
                                         }
                                     }
@@ -518,10 +498,8 @@ impl Table {
                                         // Show skipped SQL
                                         let _ = writeln!(skipped_triggers, "-- SKIPPED (with_trigger_drop=false):\n-- {}\n-- {}", drop_sql, create_sql);
                                     } else {
-                                        return Err(format!(
-                                            "Trigger {} on {}.{} has changed but without_failfast is enabled. SQL would be:\n{}\n{}",
-                                            dt.name, schema, self.table_name, drop_sql, create_sql
-                                        ));
+                                        return Err(tr!("table.trigger_changed", name = dt.name,
+                                            table = format!("{}.{}", schema, self.table_name), drop = drop_sql, create = create_sql).into());
                                     }
                                 }
                             }
@@ -602,10 +580,9 @@ impl Table {
                                 #[cfg(not(feature = "slog"))]
                                 eprintln!("Skipped primary key changes:\n{}", skipped_pk);
                             } else {
-                                return Err(format!(
-                                    "Primary key on {}.{} has changed from {:?} to {:?} but with_index_drop is disabled. SQL would be:\n{}{}",
-                                    schema, self.table_name, existing_pk, desired_pk, drop_pk_sql, add_pk_sql
-                                ));
+                                return Err(tr!("table.pk_changed", table = format!("{}.{}", schema, self.table_name),
+                                    from = format!("{:?}", existing_pk), to = format!("{:?}", desired_pk),
+                                    drop = drop_pk_sql, add = add_pk_sql).into());
                             }
                         }
                     }
@@ -757,34 +734,34 @@ impl Table {
 
         match dry_run {
             Some(store) => {
-                store(vec![sql, comments, indexes_sql, grants_sql, data]).map(|_| false)
+                Ok(store(vec![sql, comments, indexes_sql, grants_sql, data]).map(|_| false)?)
             }
             None => {
                 if exec {
                     if !sql.is_empty() {
-                        #[cfg(feature = "slog")] log_debug("deploy SQL", &sql, file, schema);
+                        #[cfg(feature = "slog")] log_debug(&tr!("table.log_deploy_sql"), &sql, file, schema);
                         let _ = db.batch_execute(sql.as_str()).await
-                            .map_err(|e| Self::format_it("DB execute", sql, e, file))?;
+                            .map_err(|e| Self::refused(DeployStep::Table, sql, e, file))?;
                     }
                     if !comments.is_empty() {
-                        #[cfg(feature = "slog")] log_debug("deploy SQL", &comments, file, schema);
+                        #[cfg(feature = "slog")] log_debug(&tr!("table.log_deploy_sql"), &comments, file, schema);
                         let _ = db.batch_execute(comments.as_str()).await
-                            .map_err(|e| Self::format_it("DB execute comments", comments, e, file))?;
+                            .map_err(|e| Self::refused(DeployStep::Comments, comments, e, file))?;
                     }
                     if !indexes_sql.is_empty() {
-                        #[cfg(feature = "slog")] log_debug("deploy SQL", &indexes_sql, file, schema);
+                        #[cfg(feature = "slog")] log_debug(&tr!("table.log_deploy_sql"), &indexes_sql, file, schema);
                         let _ = db.batch_execute(indexes_sql.as_str()).await
-                            .map_err(|e| Self::format_it("DB execute indexes", indexes_sql, e, file))?;
+                            .map_err(|e| Self::refused(DeployStep::Indexes, indexes_sql, e, file))?;
                     }
                     if !grants_sql.is_empty() {
-                        #[cfg(feature = "slog")] log_debug("deploy SQL", &grants_sql, file, schema);
+                        #[cfg(feature = "slog")] log_debug(&tr!("table.log_deploy_sql"), &grants_sql, file, schema);
                         let _ = db.batch_execute(grants_sql.as_str()).await
-                            .map_err(|e| Self::format_it("DB execute grants", grants_sql, e, file))?;
+                            .map_err(|e| Self::refused(DeployStep::Grants, grants_sql, e, file))?;
                     }
                     if !data.is_empty() {
-                        #[cfg(feature = "slog")] log_debug("deploy SQL", &data, file, schema);
+                        #[cfg(feature = "slog")] log_debug(&tr!("table.log_deploy_sql"), &data, file, schema);
                         let _ = db.batch_execute(data.as_str()).await
-                            .map_err(|e| Self::format_it("DB execute data upserts", data, e, file))?;
+                            .map_err(|e| Self::refused(DeployStep::Data, data, e, file))?;
                     }
                 }
                 Ok(exec)
@@ -792,15 +769,14 @@ impl Table {
         }
     }
 
-    fn format_it(msg: &str, sql: String, e: tokio_postgres::Error, file: &str) -> String {
-        format!("{} [{}] {} {} \nThe error is: {}", msg, sql,
-                if file.len() > 0 { ", source: " } else { "" },
-                file,
-                match e.as_db_error() {
-                    None => e.to_string(),
-                    Some(e) => e.to_string()
-                }
-        )
+    /// a statement Postgres refused, as it refused it
+    fn refused(step: DeployStep, sql: String, err: tokio_postgres::Error, file: &str) -> DeployError {
+        DeployError::Pg { step, sql, file: file.to_string(), err }
+    }
+
+    /// ", found in file: <file>" in the messages' language, or nothing without a file
+    fn in_file(file: Option<&String>) -> String {
+        file.map(|f| tr!("table.in_file", file = f)).unwrap_or_default()
     }
 
     fn insert(&self, data: &mut String, row: &Vec<String>, schema: &String) {
@@ -853,9 +829,24 @@ impl Table {
         }
     }
 
-    /// build a create or alter sql
-    #[allow(unused, unused_mut)]
+    /// build the foreign keys - deploy_fk_pg, a statement Postgres refused said as a message
     pub async fn deploy_fk(
+        &self,
+        schemas: &OrderedHashMap<Schema>,
+        dbc: &mut InfoSchemaType,
+        db: &mut tokio_postgres::Transaction<'_>,
+        schema: &String,
+        is_retry: bool,
+        file: &str,
+        dry_run: Option<&(dyn Fn(Vec<String>) -> Result<(), String> + Send + Sync)>,
+    ) -> Result<bool, String> {
+        self.deploy_fk_pg(schemas, dbc, db, schema, is_retry, file, dry_run).await.map_err(|e| e.to_string())
+    }
+
+    /// build the foreign keys, and run them: a statement Postgres refuses is returned
+    /// as its native error (error.rs)
+    #[allow(unused, unused_mut)]
+    pub async fn deploy_fk_pg(
         &self,
         // target: &FileVersion,
         schemas: &OrderedHashMap<Schema>, //FilesMap,
@@ -865,7 +856,7 @@ impl Table {
         is_retry: bool,
         file: &str,
         dry_run: Option<&(dyn Fn(Vec<String>) -> Result<(), String> + Send + Sync)>,
-    ) -> Result<bool, String> {
+    ) -> Result<bool, DeployError> {
         let mut sql = String::new();
         let mut fk_list = HashMap::new();
         if let Some(ss) = dbc.get(schema) {
@@ -920,12 +911,12 @@ impl Table {
 
         match dry_run {
             Some(store) => {
-                store(vec![sql]).map(|_| false)
+                Ok(store(vec![sql]).map(|_| false)?)
             }
             None => {
                 if exec {
                     if let Err(e) = db.batch_execute(sql.as_str()).await {
-                        return Err(format!("DB FK execute [{}]: {} source: {}", sql, e, file));
+                        return Err(Self::refused(DeployStep::ForeignKeys, sql, e, file));
                     }
                     Ok(exec)
                 } else {

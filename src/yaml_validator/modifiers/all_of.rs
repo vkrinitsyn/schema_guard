@@ -26,7 +26,7 @@ impl<'schema> TryFrom<&'schema Yaml> for SchemaAllOf<'schema> {
 
         if items.is_empty() {
             return Err(SchemaErrorKind::MalformedField {
-                error: "allOf modifier requires an array of schemas to validate against".to_owned(),
+                error: tr!("validation.all_of_array"),
             }
             .with_path_name("allOf"));
         }
@@ -126,7 +126,7 @@ mod tests {
                 .validate(&Context::default(), &load_simple("hi"))
                 .unwrap_err(),
             ValidationErrorKind::ValidationError {
-                error: "string length is less than minLength"
+                error: "validation.min_length"
             }
             .into()
         );

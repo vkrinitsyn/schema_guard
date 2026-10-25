@@ -10,6 +10,9 @@
 #[macro_use] extern crate slog;
 extern crate yaml_rust2;
 
+// [i18n] locales/*.yml, compiled in; a language without a message is English
+rust_i18n::i18n!("locales", fallback = "en");
+
 use std::convert::TryFrom;
 use std::fs;
 use std::result::Result;
@@ -30,6 +33,13 @@ use crate::utils::OrderedHashMap;
 
 use self::yaml_rust2::Yaml;
 
+pub use i18n::set_lang;
+pub use error::{pg_error, set_lc_messages, DeployError, DeployStep};
+
+// first: tr! is declared there, for the modules below
+#[macro_use]
+mod i18n;
+mod error;
 pub mod loader;
 pub mod table;
 pub mod column;
@@ -41,7 +51,6 @@ mod yaml_validator;
 
 static SCHEMA_YAML: &'static str = include_str!("schema.yaml");
 const APP_NAME: &str = "SchemaGuard";
-const BANNER_MSG: &str = "provided by DBinvent.com | DBinvent.github.io \n Check SGE: SchemaGuardEnterprise for better experience (same license)";
 
 lazy_static! {
     pub(crate) static ref LOG: Arc<RwLock<Option<Logger>>> = Arc::new (RwLock::new(None));
@@ -49,8 +58,11 @@ lazy_static! {
     pub(crate) static ref SCHEMA_YAMLS: Vec<Yaml> = YamlLoader::load_from_str(SCHEMA_YAML).expect("wrong schema");
 }
 
+/// The logger for schema_guard's messages. A `lang` value on it, `o!("lang" => "ru")`,
+/// is the language of the messages, unless set_lang has set one - see i18n.rs
 #[cfg(feature = "slog")]
 pub fn set_logger(logger: Logger) {
+    i18n::set_logger_lang(i18n::lang_of(&logger));
     let mut log = LOG.write().unwrap();
     *log = Some(logger);
 }
@@ -118,28 +130,30 @@ pub fn get_schema() -> Vec<Yaml> {
 /// Migrate one yaml schema file with options
 pub async fn migrate1(schema: Yaml, db_url: &str) -> Result<usize, String> {
     let config = tokio_postgres::config::Config::from_str(db_url)
-        .map_err(|e| format!("parse db_url: {e}"))?;
+        .map_err(|e| tr!("lib.parse_db_url", err = pg_error(&e)))?;
     let (mut client, conn) = config.connect(tokio_postgres::NoTls)
-        .await.map_err(|e| format!("connect: {e}"))?;
+        .await.map_err(|e| tr!("lib.connect", err = pg_error(&e)))?;
     tokio::spawn(async move { let _ = conn.await; });
+    set_lc_messages(&client, &i18n::lang()).await;
     let mut tx = client.transaction()
-        .await.map_err(|e| format!("transaction: {e}"))?;
+        .await.map_err(|e| tr!("lib.transaction", err = pg_error(&e)))?;
     let cnt = migrate(schema, &mut tx, None, "", &MigrationOptions::default()).await?;
-    tx.commit().await.map_err(|e| format!("commit: {e}"))?;
+    tx.commit().await.map_err(|e| tr!("lib.commit", err = pg_error(&e)))?;
     Ok(cnt)
 }
 
 /// Migrate one yaml schema file with options
 pub async fn migrate_opt(schema: Yaml, db_url: &str, opt: &MigrationOptions) -> Result<usize, String> {
     let config = tokio_postgres::config::Config::from_str(db_url)
-        .map_err(|e| format!("parse db_url: {e}"))?;
+        .map_err(|e| tr!("lib.parse_db_url", err = pg_error(&e)))?;
     let (mut client, conn) = config.connect(tokio_postgres::NoTls)
-        .await.map_err(|e| format!("connect: {e}"))?;
+        .await.map_err(|e| tr!("lib.connect", err = pg_error(&e)))?;
     tokio::spawn(async move { let _ = conn.await; });
+    set_lc_messages(&client, &i18n::lang()).await;
     let mut tx = client.transaction()
-        .await.map_err(|e| format!("transaction: {e}"))?;
+        .await.map_err(|e| tr!("lib.transaction", err = pg_error(&e)))?;
     let cnt = migrate(schema, &mut tx, None, "", &opt).await?;
-    tx.commit().await.map_err(|e| format!("commit: {e}"))?;
+    tx.commit().await.map_err(|e| tr!("lib.commit", err = pg_error(&e)))?;
     Ok(cnt)
 }
 
@@ -150,13 +164,13 @@ pub async fn migrate(schema: Yaml, db: &mut tokio_postgres::Transaction<'_>,
                dry_run: Option<&(dyn Fn(Vec<String>) -> Result<(), String> + Sync + Send)>, file_name: &str,
                opt: &MigrationOptions
 ) -> Result<usize, String> {
-    log_info(&format!("{} {} {}", APP_NAME, env!("CARGO_PKG_VERSION"), BANNER_MSG));
+    log_info(&format!("{} {} {}", APP_NAME, env!("CARGO_PKG_VERSION"), tr!("lib.banner")));
 
     // let mut db = dbc.transaction().map_err(|e| format!("{}", e))?;
     let mut cnt = 0;
     // check db connection
     let db_name: String = db.query("select current_database()", &[])
-        .await.map_err(|e| format!("DB connection error: {}", e))?[0].get(0);
+        .await.map_err(|e| tr!("lib.db_connection", err = pg_error(&e)))?[0].get(0);
     // load schema
     let mut info = load_info_schema(db_name.as_str(), db).await?;
     let schemas = parse_yaml_schema(schema, file_name)?;
@@ -176,7 +190,7 @@ pub async fn migrate(schema: Yaml, db: &mut tokio_postgres::Transaction<'_>,
 pub fn load_schema_from_file(filename_yaml: &str) -> Result<Yaml, String> {
     match fs::read_to_string(filename_yaml) {
         Ok(data) => load_schema_from_src(data),
-        Err(e) => Err(format!("load error [{}]: {}", filename_yaml, e))
+        Err(e) => Err(tr!("lib.load_file", file = filename_yaml, err = e))
     }
 }
 
@@ -186,24 +200,24 @@ pub fn load_schema_from_src(data: String) -> Result<Yaml, String> {
         Ok(mut y) => {
             let doc = y.remove(0);
             let context = yaml_validator::Context::try_from(&crate::SCHEMA_YAMLS[..])
-                .map_err(|e| format!("correct schema.yaml: context {}", e))?;
+                .map_err(|e| tr!("lib.schema_context", err = e))?;
 
             let yts = match context.get_schema("database") {
-                None => { return Err("correct schema.yaml: database".to_string()); }
+                None => { return Err(tr!("lib.schema_database")); }
                 Some(y) => y,
             };
             let _ = yts.validate(&context, &doc)
-                .map_err(|err| {format!("Schema validation error: {}", err)})?;
+                .map_err(|err| tr!("lib.validation", err = err))?;
             Ok(doc)
         },
-        Err(e) => Err(format!("parsing error: {} ", e)),
+        Err(e) => Err(tr!("lib.parsing", err = e)),
     }
 }
 
 /// filename is for logging reference only
 pub fn parse_yaml_schema(yaml: Yaml, file_name: &str) -> Result<OrderedHashMap<Schema>, String> {
     match yaml["database"].as_vec() {
-        None => Err("empty file".to_string()),
+        None => Err(tr!("lib.empty_file")),
         Some(schemas) => {
             let mut schema_schemas = OrderedHashMap::new();
 
@@ -243,7 +257,7 @@ mod tests {
         let file = |extra: &str| format!("database:\n  - schemaName: s\n    tables:\n      - table:\n          tableName: t\n{}          columns:\n            - column: {{ name: id, type: int }}\n", extra);
         assert!(load_schema_from_src(file("")).is_ok());
         let e = load_schema_from_src(file("          colour: red\n")).unwrap_err();
-        assert!(e.starts_with("Schema validation error") && e.contains("colour"), "{}", e);
+        assert!(e.starts_with("SG-E009 ") && e.contains("colour"), "{}", e);
     }
 
     #[tokio::test]

@@ -38,7 +38,7 @@ impl<'schema> TryFrom<&'schema Yaml> for SchemaString {
         if let (Some(min_length), Some(max_length)) = (min_length, max_length) {
             if min_length > max_length {
                 return Err(SchemaErrorKind::MalformedField {
-                    error: "minLength cannot be greater than maxLength".into(),
+                    error: tr!("validation.min_gt_max_length"),
                 }
                 .into());
             }
@@ -79,7 +79,7 @@ impl<'yaml, 'schema: 'yaml> Validate<'yaml, 'schema> for SchemaString {
         if let Some(min_length) = self.min_length {
             if value.len() < min_length {
                 return Err(ValidationErrorKind::ValidationError {
-                    error: "string length is less than minLength",
+                    error: "validation.min_length",
                 }
                 .into());
             }
@@ -88,7 +88,7 @@ impl<'yaml, 'schema: 'yaml> Validate<'yaml, 'schema> for SchemaString {
         if let Some(max_length) = self.max_length {
             if value.len() > max_length {
                 return Err(ValidationErrorKind::ValidationError {
-                    error: "string length is greater than maxLength",
+                    error: "validation.max_length",
                 }
                 .into());
             }
@@ -98,7 +98,7 @@ impl<'yaml, 'schema: 'yaml> Validate<'yaml, 'schema> for SchemaString {
             if let Some(regex) = &self.pattern {
                 if !regex.is_match(value) {
                     return Err(ValidationErrorKind::ValidationError {
-                        error: "supplied value does not match regex pattern for field",
+                        error: "validation.regex",
                     }
                     .into());
                 }
@@ -185,7 +185,7 @@ mod tests {
             ))
             .unwrap_err(),
             SchemaErrorKind::MalformedField {
-                error: "must be a non-negative integer value".into()
+                error: tr!("validation.non_negative")
             }
             .with_path_name("maxLength")
         );
@@ -233,7 +233,7 @@ mod tests {
             ))
             .unwrap_err(),
             SchemaErrorKind::MalformedField {
-                error: "minLength cannot be greater than maxLength".into()
+                error: tr!("validation.min_gt_max_length")
             }
             .into()
         );
@@ -323,7 +323,7 @@ mod tests {
                 .validate(&Context::default(), &load_simple("hello"))
                 .unwrap_err(),
             ValidationErrorKind::ValidationError {
-                error: "string length is less than minLength"
+                error: "validation.min_length"
             }
             .into()
         );
@@ -336,7 +336,7 @@ mod tests {
                 )
                 .unwrap_err(),
             ValidationErrorKind::ValidationError {
-                error: "string length is greater than maxLength"
+                error: "validation.max_length"
             }
             .into()
         );
@@ -362,7 +362,7 @@ mod tests {
                 .validate(&Context::default(), &load_simple("world"))
                 .unwrap_err(),
             ValidationErrorKind::ValidationError {
-                error: "supplied value does not match regex pattern for field",
+                error: "validation.regex",
             }
             .into()
         );

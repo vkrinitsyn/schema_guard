@@ -4,25 +4,34 @@ use crate::yaml_validator::breadcrumb::{Breadcrumb, BreadcrumbSegment, Breadcrum
 
 use super::GenericError;
 
+/// [i18n] Each kind says what is wrong in the messages' language - see GenericError.
+/// ValidationError's `error` is the key of its message, in locales/validation.yml
 #[derive(Error, Debug, PartialEq, Eq)]
 pub enum ValidationErrorKind<'a> {
-    #[error("wrong type, expected {expected} got {actual}")]
     WrongType {
         expected: &'static str,
         actual: &'a str,
     },
-    #[error("special requirements for field not met: {error}")]
     ValidationError { error: &'a str },
-    #[error("field '{field}' missing")]
     FieldMissing { field: &'a str },
-    #[error("field '{field}' is not specified in the schema")]
     ExtraField { field: &'a str },
-    #[error("unknown type specified: {unknown_type}")]
     UnknownType { unknown_type: &'a str },
-    #[error("multiple errors were encountered: {errors:?}")]
     Multiple { errors: Vec<ValidationError<'a>> },
-    #[error("schema '{uri}' references was not found")]
     UnknownSchema { uri: &'a str },
+}
+
+impl<'a> std::fmt::Display for ValidationErrorKind<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&match self {
+            ValidationErrorKind::WrongType { expected, actual } => tr!("validation.wrong_type", expected = expected, actual = actual),
+            ValidationErrorKind::ValidationError { error } => tr!("validation.special", error = tr!(*error)),
+            ValidationErrorKind::FieldMissing { field } => tr!("validation.field_missing", field = field),
+            ValidationErrorKind::ExtraField { field } => tr!("validation.extra_field", field = field),
+            ValidationErrorKind::UnknownType { unknown_type } => tr!("validation.unknown_type", unknown = unknown_type),
+            ValidationErrorKind::Multiple { errors } => tr!("validation.multiple", errors = format!("{:?}", errors)),
+            ValidationErrorKind::UnknownSchema { uri } => tr!("validation.unknown_schema", uri = uri),
+        })
+    }
 }
 
 impl<'a> ValidationErrorKind<'a> {

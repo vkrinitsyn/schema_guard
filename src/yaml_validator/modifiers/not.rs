@@ -41,7 +41,7 @@ impl<'yaml, 'schema: 'yaml> Validate<'yaml, 'schema> for SchemaNot<'schema> {
         match self.item.validate(ctx, yaml) {
             Err(_) => Ok(()),
             Ok(_) => Err(ValidationErrorKind::ValidationError {
-                error: "validation inversion failed because inner result matched",
+                error: "validation.not_matched",
             }
             .with_path_name("not")),
         }
@@ -111,7 +111,7 @@ mod tests {
                 .validate(&Context::default(), &load_simple("20"))
                 .unwrap_err(),
             ValidationErrorKind::ValidationError {
-                error: "validation inversion failed because inner result matched"
+                error: "validation.not_matched"
             }
             .with_path_name("not")
         );

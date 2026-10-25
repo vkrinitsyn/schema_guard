@@ -58,7 +58,7 @@ impl<'schema> TryFrom<&'schema Yaml> for SchemaArray<'schema> {
         if let (Some(min_items), Some(max_items)) = (min_items, max_items) {
             if min_items > max_items {
                 return Err(SchemaErrorKind::MalformedField {
-                    error: "minItems cannot be greater than maxItems".into(),
+                    error: tr!("validation.min_gt_max_items"),
                 }
                 .into());
             }
@@ -101,18 +101,18 @@ impl<'schema> TryFrom<&'schema Yaml> for SchemaArray<'schema> {
         // This does not seem like the nicest way to do this...
         match (&contains, &min_contains, &max_contains) {
             (None   , Some(_)  , None     ) => Err(SchemaError::from(SchemaErrorKind::MalformedField {
-                error: "minContains requires 'contains' to specify a schema to validate against".into()
+                error: tr!("validation.min_contains_needs")
             })),
             (None   , None     , Some(_)  ) => Err(SchemaError::from(SchemaErrorKind::MalformedField {
-                error: "maxContains requires 'contains' to specify a schema to validate against".into()
+                error: tr!("validation.max_contains_needs")
             })),
             (None   , Some(_)  , Some(_)  ) => Err(SchemaError::from(SchemaErrorKind::MalformedField {
-                error: "minContains and maxContains requires 'contains' to specify a schema to validate against".into()
+                error: tr!("validation.both_contains_needs")
             })),
             (Some(_), Some(min), Some(max)) => {
                 if min > max {
                     Err(SchemaErrorKind::MalformedField {
-                        error: "minContains cannot be greater than maxContains".into()
+                        error: tr!("validation.min_gt_max_contains")
                     }.into())
                 } else {
                     Ok(())
@@ -144,7 +144,7 @@ impl<'yaml, 'schema: 'yaml> Validate<'yaml, 'schema> for SchemaArray<'schema> {
         if let Some(min_items) = &self.min_items {
             if items.len() < *min_items {
                 return Err(ValidationErrorKind::ValidationError {
-                    error: "array contains fewer than minItems items",
+                    error: "validation.fewer_items",
                 }
                 .into());
             }
@@ -153,7 +153,7 @@ impl<'yaml, 'schema: 'yaml> Validate<'yaml, 'schema> for SchemaArray<'schema> {
         if let Some(max_items) = &self.max_items {
             if items.len() > *max_items {
                 return Err(ValidationErrorKind::ValidationError {
-                    error: "array contains more than maxItems items",
+                    error: "validation.more_items",
                 }
                 .into());
             }
@@ -164,7 +164,7 @@ impl<'yaml, 'schema: 'yaml> Validate<'yaml, 'schema> for SchemaArray<'schema> {
             for (i, item) in items.iter().enumerate() {
                 if set.contains(item) {
                     return Err(ValidationErrorKind::ValidationError {
-                        error: "array contains duplicate key",
+                        error: "validation.duplicate_key",
                     }
                     .with_path_index(i));
                 }
@@ -189,13 +189,13 @@ impl<'yaml, 'schema: 'yaml> Validate<'yaml, 'schema> for SchemaArray<'schema> {
                 if contained < min {
                     return Err(ValidationErrorKind::ValidationError {
                         error:
-                            "fewer than minContains items validated against schema in 'contains'",
+                            "validation.fewer_contains",
                     }
                     .into());
                 }
             } else if contained < 1 {
                 return Err(ValidationErrorKind::ValidationError {
-                    error: "at least one item in the array must match the 'contains' schema",
+                    error: "validation.contains_none",
                 }
                 .into());
             }
@@ -203,7 +203,7 @@ impl<'yaml, 'schema: 'yaml> Validate<'yaml, 'schema> for SchemaArray<'schema> {
             if let Some(max) = self.max_contains {
                 if contained > max {
                     return Err(ValidationErrorKind::ValidationError {
-                        error: "more than minContains items validated against schema in 'contains'",
+                        error: "validation.more_contains",
                     }
                     .into());
                 }
@@ -320,7 +320,7 @@ mod tests {
             ))
             .unwrap_err(),
             SchemaErrorKind::MalformedField {
-                error: "minItems cannot be greater than maxItems".into()
+                error: tr!("validation.min_gt_max_items")
             }
             .into()
         );
@@ -356,7 +356,7 @@ mod tests {
             ))
             .unwrap_err(),
             SchemaErrorKind::MalformedField {
-                error: "minContains and maxContains requires 'contains' to specify a schema to validate against".into()
+                error: tr!("validation.both_contains_needs")
             }
             .into()
         );
@@ -375,7 +375,7 @@ mod tests {
             ))
             .unwrap_err(),
             SchemaErrorKind::MalformedField {
-                error: "minContains cannot be greater than maxContains".into()
+                error: tr!("validation.min_gt_max_contains")
             }
             .into()
         );
@@ -491,7 +491,7 @@ mod tests {
                 )
                 .unwrap_err(),
             ValidationErrorKind::ValidationError {
-                error: "array contains duplicate key"
+                error: "validation.duplicate_key"
             }
             .with_path_index(3)
         );
@@ -539,7 +539,7 @@ mod tests {
                 )
                 .unwrap_err(),
             ValidationErrorKind::ValidationError {
-                error: "array contains more than maxItems items"
+                error: "validation.more_items"
             }
             .into()
         )
@@ -562,7 +562,7 @@ mod tests {
                 )
                 .unwrap_err(),
             ValidationErrorKind::ValidationError {
-                error: "array contains fewer than minItems items"
+                error: "validation.fewer_items"
             }
             .into()
         )

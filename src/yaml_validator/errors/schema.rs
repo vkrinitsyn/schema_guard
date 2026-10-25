@@ -5,23 +5,32 @@ use thiserror::Error;
 use super::GenericError;
 use crate::yaml_validator::breadcrumb::{Breadcrumb, BreadcrumbSegment, BreadcrumbSegmentVec};
 
+/// [i18n] Each kind says what is wrong in the messages' language - see GenericError.
+/// MalformedField's `error` is in it already, put there by tr! where it is made
 #[derive(Error, Debug, PartialEq, Eq)]
 pub enum SchemaErrorKind<'a> {
-    #[error("wrong type, expected {expected} got {actual}")]
     WrongType {
         expected: &'static str,
         actual: &'a str,
     },
-    #[error("malformed field: {error}")]
     MalformedField { error: String },
-    #[error("field '{field}' missing")]
     FieldMissing { field: &'a str },
-    #[error("field '{field}' is not specified in the schema")]
     ExtraField { field: &'a str },
-    #[error("unknown type specified: {unknown_type}")]
     UnknownType { unknown_type: &'a str },
-    #[error("multiple errors were encountered: {errors:?}")]
     Multiple { errors: Vec<SchemaError<'a>> },
+}
+
+impl<'a> std::fmt::Display for SchemaErrorKind<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&match self {
+            SchemaErrorKind::WrongType { expected, actual } => tr!("validation.wrong_type", expected = expected, actual = actual),
+            SchemaErrorKind::MalformedField { error } => tr!("validation.malformed", error = error),
+            SchemaErrorKind::FieldMissing { field } => tr!("validation.field_missing", field = field),
+            SchemaErrorKind::ExtraField { field } => tr!("validation.extra_field", field = field),
+            SchemaErrorKind::UnknownType { unknown_type } => tr!("validation.unknown_type", unknown = unknown_type),
+            SchemaErrorKind::Multiple { errors } => tr!("validation.multiple", errors = format!("{:?}", errors)),
+        })
+    }
 }
 
 /// A wrapper type around SchemaErrorKind containing path information about where the error occurred.
@@ -153,9 +162,10 @@ mod tests {
 
         let err = SchemaObject::try_from(&yaml).unwrap_err();
 
+        // in whatever language the messages are in
         assert_eq!(
             format!("{}", err),
-            "#.items.something.items.level2.items.leaf: field \'type\' missing\n",
+            format!("#.items.something.items.level2.items.leaf: {}\n", tr!("validation.field_missing", field = "type")),
         );
     }
 
@@ -197,13 +207,12 @@ mod tests {
         let ctx = Context::default();
         let err = schema.validate(&ctx, &document).unwrap_err();
 
+        let wrong = |actual: &str| tr!("validation.wrong_type", expected = "integer", actual = actual);
         assert_eq!(
             format!("{}", err),
-            r#"#.something.level2[0].num: wrong type, expected integer got string
-#.something.level2[1].num: wrong type, expected integer got hash
-#.something.level2[2].num: wrong type, expected integer got array
-#.something.level2[4].num: wrong type, expected integer got string
-"#
+            format!("#.something.level2[0].num: {}\n#.something.level2[1].num: {}\n\
+                #.something.level2[2].num: {}\n#.something.level2[4].num: {}\n",
+                wrong("string"), wrong("hash"), wrong("array"), wrong("string"))
         );
     }
 }

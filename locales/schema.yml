@@ -1,0 +1,30 @@
+# [i18n] see lib.yml
+_version: 2
+schema.no_table_name:
+  en: "SG-E030 no table name set in file: %{file}"
+  ru: "SG-E030 не задано имя таблицы в файле: %{file}"
+  fr: "SG-E030 aucun nom de table dans le fichier : %{file}"
+  de: "SG-E030 kein Tabellenname in der Datei: %{file}"
+  zh: "SG-E030 文件中未设置表名：%{file}"
+  ja: "SG-E030 ファイルにテーブル名がありません：%{file}"
+schema.duplicate_table:
+  en: "SG-E031 duplicate table definition: %{table} found in file: %{file}"
+  ru: "SG-E031 повторное определение таблицы %{table} в файле: %{file}"
+  fr: "SG-E031 définition de table en double : %{table} dans le fichier : %{file}"
+  de: "SG-E031 doppelte Tabellendefinition: %{table} in der Datei: %{file}"
+  zh: "SG-E031 表定义重复：%{table}，位于文件：%{file}"
+  ja: "SG-E031 テーブル定義の重複：%{table}（ファイル：%{file}）"
+schema.not_a_template:
+  en: "SG-E032 Table %{table} references '%{template}' as template, but it is not marked as template: true"
+  ru: "SG-E032 таблица %{table} использует '%{template}' как шаблон, но у той не указано template: true"
+  fr: "SG-E032 la table %{table} utilise '%{template}' comme modèle, mais celle-ci n'est pas marquée template: true"
+  de: "SG-E032 Tabelle %{table} verwendet '%{template}' als Vorlage, diese ist aber nicht mit template: true markiert"
+  zh: "SG-E032 表 %{table} 把 '%{template}' 用作模板，但它没有标记 template: true"
+  ja: "SG-E032 テーブル %{table} は '%{template}' をテンプレートとして参照していますが、template: true が指定されていません"
+schema.no_template:
+  en: "SG-E033 Table %{table} references template '%{template}' which does not exist"
+  ru: "SG-E033 таблица %{table} использует несуществующий шаблон '%{template}'"
+  fr: "SG-E033 la table %{table} utilise le modèle '%{template}', qui n'existe pas"
+  de: "SG-E033 Tabelle %{table} verwendet die Vorlage '%{template}', die es nicht gibt"
+  zh: "SG-E033 表 %{table} 引用的模板 '%{template}' 不存在"
+  ja: "SG-E033 テーブル %{table} が参照するテンプレート '%{template}' は存在しません"

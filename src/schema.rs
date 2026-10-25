@@ -1,4 +1,5 @@
 // use postgres::Transaction;
+use crate::error::DeployError;
 use serde::Serialize;
 use yaml_rust2::Yaml;
 
@@ -63,14 +64,11 @@ impl Schema {
                 let t = &t["table"];
                 match t["tableName"].as_str() {
                     None => {
-                        return Err(format!("no table name set in file: {}", self.file));
+                        return Err(tr!("schema.no_table_name", file = self.file));
                     }
                     Some(tn) => {
                         if self.tables.map.contains_key(tn) {
-                            return Err(format!(
-                                "duplicate table definition: {} found in file: {}",
-                                tn, self.file
-                            ));
+                            return Err(tr!("schema.duplicate_table", table = tn, file = self.file));
                         } else {
                             let _ = self.tables.append(Table::new(
                                 t,
@@ -87,17 +85,27 @@ impl Schema {
 
     #[inline]
     /// return statements to execute
+    /// deploy_all_tables_pg, a statement Postgres refused said as a message
     pub async fn deploy_all_tables(&self, schema: &mut InfoSchemaType,
                                    db: &mut tokio_postgres::Transaction<'_>,
                                    dry_run: Option<&(dyn Fn(Vec<String>) -> Result<(), String> + Send + Sync)>,
                                    opt: &MigrationOptions) -> Result<usize, String> {
+        self.deploy_all_tables_pg(schema, db, dry_run, opt).await.map_err(|e| e.to_string())
+    }
+
+    /// deploy every table but the templates: a statement Postgres refuses is returned as
+    /// its native error (error.rs)
+    pub async fn deploy_all_tables_pg(&self, schema: &mut InfoSchemaType,
+                                   db: &mut tokio_postgres::Transaction<'_>,
+                                   dry_run: Option<&(dyn Fn(Vec<String>) -> Result<(), String> + Send + Sync)>,
+                                   opt: &MigrationOptions) -> Result<usize, DeployError> {
         let mut cnt = 0;
         for t in &self.tables.list {
             // Skip template tables - they are not created in DB
             if t.is_template() {
                 continue;
             }
-            if t.deploy(schema, db, &self.schema_name, self.file.as_str(), dry_run, opt).await? {
+            if t.deploy_pg(schema, db, &self.schema_name, self.file.as_str(), dry_run, opt).await? {
                 cnt += 1;
             }
         }
@@ -106,18 +114,29 @@ impl Schema {
 
     #[inline]
     /// return statements to execute
+    /// deploy_all_fk_pg, a statement Postgres refused said as a message
     pub async fn deploy_all_fk(&self, schemas: &OrderedHashMap<Schema>,
                                schema: &mut InfoSchemaType,
                                db: &mut tokio_postgres::Transaction<'_>,
                                retry: bool,
                                dry_run: Option<&(dyn Fn(Vec<String>) -> Result<(), String> + Send + Sync)>) -> Result<usize, String> {
+        self.deploy_all_fk_pg(schemas, schema, db, retry, dry_run).await.map_err(|e| e.to_string())
+    }
+
+    /// deploy every table's foreign keys but the templates': a statement Postgres refuses
+    /// is returned as its native error (error.rs)
+    pub async fn deploy_all_fk_pg(&self, schemas: &OrderedHashMap<Schema>,
+                               schema: &mut InfoSchemaType,
+                               db: &mut tokio_postgres::Transaction<'_>,
+                               retry: bool,
+                               dry_run: Option<&(dyn Fn(Vec<String>) -> Result<(), String> + Send + Sync)>) -> Result<usize, DeployError> {
         let mut cnt = 0;
         for t in &self.tables.list {
             // Skip template tables - they are not created in DB
             if t.is_template() {
                 continue;
             }
-            if t.deploy_fk(schemas, schema, db, &self.schema_name, retry, self.file.as_str(), dry_run).await? {
+            if t.deploy_fk_pg(schemas, schema, db, &self.schema_name, retry, self.file.as_str(), dry_run).await? {
                 cnt += 1;
             }
         }
@@ -161,18 +180,14 @@ impl Schema {
                 match template {
                     Some(t) => {
                         if !t.is_template() {
-                            return Err(format!(
-                                "Table {}.{} references '{}' as template, but it is not marked as template: true",
-                                self.schema_name, table_name, template_ref
-                            ));
+                            return Err(tr!("schema.not_a_template",
+                                table = format!("{}.{}", self.schema_name, table_name), template = template_ref));
                         }
                         templates_to_merge.push(t);
                     }
                     None => {
-                        return Err(format!(
-                            "Table {}.{} references template '{}' which does not exist",
-                            self.schema_name, table_name, template_ref
-                        ));
+                        return Err(tr!("schema.no_template",
+                            table = format!("{}.{}", self.schema_name, table_name), template = template_ref));
                     }
                 }
             }

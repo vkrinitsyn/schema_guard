@@ -157,10 +157,8 @@ impl IndexBuilder {
                             drop_sql, create_sql.trim()
                         ));
                     } else {
-                        return Err(format!(
-                            "Index {} on {}.{} has changed but without_failfast is enabled. SQL would be:\n{}\n{}",
-                            actual_index_name, schema, table_name, drop_sql, create_sql.trim()
-                        ));
+                        return Err(tr!("index.changed", name = actual_index_name,
+                            table = format!("{}.{}", schema, table_name), drop = drop_sql, create = create_sql.trim()));
                     }
                 }
             }

@@ -1,0 +1,88 @@
+# [i18n] schema_guard's messages: src/i18n.rs. Each in every language - en, ru, and, not
+# reviewed, fr, de, zh (Simplified Chinese), ja. An error starts with its code, SG-Ennn,
+# the same in every language.
+_version: 2
+lib.parse_db_url:
+  en: "SG-E001 parse db_url: %{err}"
+  ru: "SG-E001 разбор db_url: %{err}"
+  fr: "SG-E001 analyse de db_url : %{err}"
+  de: "SG-E001 db_url nicht lesbar: %{err}"
+  zh: "SG-E001 无法解析 db_url：%{err}"
+  ja: "SG-E001 db_url を解析できません：%{err}"
+lib.connect:
+  en: "SG-E002 connect: %{err}"
+  ru: "SG-E002 подключение: %{err}"
+  fr: "SG-E002 connexion : %{err}"
+  de: "SG-E002 Verbindung: %{err}"
+  zh: "SG-E002 连接：%{err}"
+  ja: "SG-E002 接続：%{err}"
+lib.transaction:
+  en: "SG-E003 transaction: %{err}"
+  ru: "SG-E003 транзакция: %{err}"
+  fr: "SG-E003 transaction : %{err}"
+  de: "SG-E003 Transaktion: %{err}"
+  zh: "SG-E003 事务：%{err}"
+  ja: "SG-E003 トランザクション：%{err}"
+lib.commit:
+  en: "SG-E004 commit: %{err}"
+  ru: "SG-E004 фиксация транзакции: %{err}"
+  fr: "SG-E004 validation de la transaction : %{err}"
+  de: "SG-E004 Commit: %{err}"
+  zh: "SG-E004 提交：%{err}"
+  ja: "SG-E004 コミット：%{err}"
+lib.db_connection:
+  en: "SG-E005 DB connection error: %{err}"
+  ru: "SG-E005 ошибка подключения к базе: %{err}"
+  fr: "SG-E005 erreur de connexion à la base : %{err}"
+  de: "SG-E005 Fehler bei der Datenbankverbindung: %{err}"
+  zh: "SG-E005 数据库连接错误：%{err}"
+  ja: "SG-E005 データベース接続エラー：%{err}"
+lib.load_file:
+  en: "SG-E006 load error [%{file}]: %{err}"
+  ru: "SG-E006 ошибка чтения [%{file}]: %{err}"
+  fr: "SG-E006 erreur de lecture [%{file}] : %{err}"
+  de: "SG-E006 Ladefehler [%{file}]: %{err}"
+  zh: "SG-E006 读取错误 [%{file}]：%{err}"
+  ja: "SG-E006 読み込みエラー [%{file}]：%{err}"
+lib.schema_context:
+  en: "SG-E007 the validation schema, schema.yaml, does not load: %{err}"
+  ru: "SG-E007 схема проверки, schema.yaml, не загружается: %{err}"
+  fr: "SG-E007 le schéma de validation, schema.yaml, ne se charge pas : %{err}"
+  de: "SG-E007 das Validierungsschema schema.yaml lässt sich nicht laden: %{err}"
+  zh: "SG-E007 校验模式 schema.yaml 无法加载：%{err}"
+  ja: "SG-E007 検証スキーマ schema.yaml を読み込めません：%{err}"
+lib.schema_database:
+  en: "SG-E008 the validation schema, schema.yaml, has no 'database' definition"
+  ru: "SG-E008 в схеме проверки, schema.yaml, нет определения 'database'"
+  fr: "SG-E008 le schéma de validation, schema.yaml, n'a pas de définition 'database'"
+  de: "SG-E008 das Validierungsschema schema.yaml hat keine Definition 'database'"
+  zh: "SG-E008 校验模式 schema.yaml 中没有 'database' 定义"
+  ja: "SG-E008 検証スキーマ schema.yaml に 'database' の定義がありません"
+lib.validation:
+  en: "SG-E009 Schema validation error: %{err}"
+  ru: "SG-E009 ошибка проверки схемы: %{err}"
+  fr: "SG-E009 erreur de validation du schéma : %{err}"
+  de: "SG-E009 Fehler bei der Schemavalidierung: %{err}"
+  zh: "SG-E009 模式校验错误：%{err}"
+  ja: "SG-E009 スキーマ検証エラー：%{err}"
+lib.parsing:
+  en: "SG-E010 parsing error: %{err}"
+  ru: "SG-E010 ошибка разбора: %{err}"
+  fr: "SG-E010 erreur d'analyse : %{err}"
+  de: "SG-E010 Fehler beim Einlesen: %{err}"
+  zh: "SG-E010 解析错误：%{err}"
+  ja: "SG-E010 解析エラー：%{err}"
+lib.empty_file:
+  en: "SG-E011 empty file: no 'database' list"
+  ru: "SG-E011 пустой файл: нет списка 'database'"
+  fr: "SG-E011 fichier vide : pas de liste 'database'"
+  de: "SG-E011 leere Datei: keine Liste 'database'"
+  zh: "SG-E011 空文件：没有 'database' 列表"
+  ja: "SG-E011 空のファイル：'database' のリストがありません"
+lib.banner:
+  en: "provided by DBinvent.com | DBinvent.github.io \n Check SGE: SchemaGuardEnterprise for better experience (same license)"
+  ru: "от DBinvent.com | DBinvent.github.io \n Попробуйте SGE: SchemaGuardEnterprise — больше возможностей (та же лицензия)"
+  fr: "fourni par DBinvent.com | DBinvent.github.io \n Essayez SGE : SchemaGuardEnterprise, plus complet (même licence)"
+  de: "bereitgestellt von DBinvent.com | DBinvent.github.io \n Probieren Sie SGE: SchemaGuardEnterprise, mehr Möglichkeiten (gleiche Lizenz)"
+  zh: "由 DBinvent.com | DBinvent.github.io 提供 \n 试试 SGE：SchemaGuardEnterprise，功能更全（相同许可证）"
+  ja: "提供：DBinvent.com | DBinvent.github.io \n より便利な SGE：SchemaGuardEnterprise もお試しください（同じライセンス）"

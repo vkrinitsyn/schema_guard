@@ -26,7 +26,7 @@ impl<'schema> TryFrom<&'schema Yaml> for SchemaOneOf<'schema> {
 
         if items.is_empty() {
             return Err(SchemaErrorKind::MalformedField {
-                error: "oneOf modifier requires an array of schemas to validate against".to_owned(),
+                error: tr!("validation.one_of_array"),
             }
             .with_path_name("oneOf"));
         }
@@ -62,7 +62,7 @@ impl<'yaml, 'schema: 'yaml> Validate<'yaml, 'schema> for SchemaOneOf<'schema> {
                         .map(Result::unwrap)
                         .map(|(_, id)| {
                             ValidationErrorKind::ValidationError {
-                                error: "multiple branches of oneOf validated successfully. oneOf must only contain a single valid branch",
+                                error: "validation.one_of_multiple",
                             }
                             .with_path_index(id)
                         })
@@ -137,8 +137,8 @@ mod tests {
             .validate(&Context::default(), &load_simple("10"))
             .unwrap_err(),
             ValidationErrorKind::Multiple { errors: vec![
-                ValidationErrorKind::ValidationError { error: "multiple branches of oneOf validated successfully. oneOf must only contain a single valid branch"}.with_path_index(0),
-                ValidationErrorKind::ValidationError { error: "multiple branches of oneOf validated successfully. oneOf must only contain a single valid branch"}.with_path_index(1),
+                ValidationErrorKind::ValidationError { error: "validation.one_of_multiple"}.with_path_index(0),
+                ValidationErrorKind::ValidationError { error: "validation.one_of_multiple"}.with_path_index(1),
             ]}.with_path_name("oneOf")
         )
     }
@@ -187,8 +187,8 @@ mod tests {
                 .validate(&Context::default(), &load_simple("hello you!"))
                 .unwrap_err(),
                 ValidationErrorKind::Multiple { errors: vec![
-                ValidationErrorKind::ValidationError { error: "multiple branches of oneOf validated successfully. oneOf must only contain a single valid branch"}.with_path_index(0),
-                ValidationErrorKind::ValidationError { error: "multiple branches of oneOf validated successfully. oneOf must only contain a single valid branch"}.with_path_index(1),
+                ValidationErrorKind::ValidationError { error: "validation.one_of_multiple"}.with_path_index(0),
+                ValidationErrorKind::ValidationError { error: "validation.one_of_multiple"}.with_path_index(1),
             ]}.with_path_name("oneOf")
         );
     }
