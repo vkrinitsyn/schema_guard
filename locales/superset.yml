@@ -1,0 +1,16 @@
+# [i18n] schema_guard's messages: src/i18n.rs - the Superset bundle's (src/superset.rs)
+_version: 2
+superset.zip_limit:
+  en: "SG-E072 the Superset bundle does not fit a ZIP without ZIP64: %{what}"
+  ru: "SG-E072 пакет Superset не помещается в ZIP без ZIP64: %{what}"
+  fr: "SG-E072 le paquet Superset ne tient pas dans un ZIP sans ZIP64 : %{what}"
+  de: "SG-E072 das Superset-Paket passt in kein ZIP ohne ZIP64: %{what}"
+  zh: "SG-E072 Superset 导入包超出了不带 ZIP64 的 ZIP 的上限：%{what}"
+  ja: "SG-E072 Superset バンドルが ZIP64 なしの ZIP に収まりません：%{what}"
+superset.uuid:
+  en: "SG-E073 not a UUID, as Superset's export prints one (8-4-4-4-12 hex digits): %{uuid}"
+  ru: "SG-E073 не UUID в том виде, как его выводит экспорт Superset (8-4-4-4-12 шестнадцатеричных цифр): %{uuid}"
+  fr: "SG-E073 pas un UUID tel que l'export de Superset l'écrit (8-4-4-4-12 chiffres hexadécimaux) : %{uuid}"
+  de: "SG-E073 keine UUID, wie Supersets Export sie schreibt (8-4-4-4-12 Hexadezimalziffern): %{uuid}"
+  zh: "SG-E073 不是 Superset 导出所写形式的 UUID（8-4-4-4-12 位十六进制数字）：%{uuid}"
+  ja: "SG-E073 Superset のエクスポートが出力する形式の UUID ではありません（8-4-4-4-12 桁の 16 進数）：%{uuid}"

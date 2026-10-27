@@ -325,7 +325,7 @@ impl Table {
                                     let seq_fqn = format!("{}.{}", schema, seq_name);
                                     // CREATE SEQUENCE is idempotent with IF NOT EXISTS
                                     sql.push_str(&format!("CREATE SEQUENCE IF NOT EXISTS {};\n", seq_fqn));
-                                    // Build column def for use inside EXECUTE '...' — single
+                                    // Build column def for use inside EXECUTE '...' - single
                                     // quotes inside the EXECUTE string must be doubled.
                                     let mut col_parts = format!("{} {}", dc.name, base_type);
                                     if def.pk && !pks.is_some() {
@@ -711,7 +711,7 @@ impl Table {
                 let _ = writeln!(
                     comments,
                     "COMMENT ON TABLE {}.{} IS '{}'; \n",
-                    schema, self.table_name, self.description
+                    schema, self.table_name, sql_literal(&self.description)
                 );
             }
 
@@ -824,7 +824,7 @@ impl Table {
             let _ = writeln!(
                 sql,
                 "COMMENT ON COLUMN {}.{}.{} IS '{}';",
-                schema, self.table_name, column_name, t
+                schema, self.table_name, column_name, sql_literal(t)
             );
         }
     }
@@ -1273,3 +1273,19 @@ fn pks(schema: &String, table: &String, sks: &OrderedHashMap<Schema>) -> HashSet
     }
     pk
 }
+/// A comment's text inside `'...'`: a `'` doubled - a description read from the database
+/// (`loader`, since 2.2.0) may hold one, `Customer's orders`, and the COMMENT failed
+fn sql_literal(t: &str) -> String {
+    t.replace('\'', "''")
+}
+
+#[cfg(test)]
+mod comment_tests {
+    /// a description with a `'` - read from the database since 2.2.0 - is one literal
+    #[test]
+    fn a_comment_with_a_quote_is_one_literal() {
+        assert_eq!(super::sql_literal("Customer's orders"), "Customer''s orders");
+        assert_eq!(super::sql_literal("plain"), "plain");
+    }
+}
+

@@ -1,4 +1,4 @@
-# agent.md — schema_guard_tokio
+# agent.md - schema_guard_tokio
 
 A guide for coding agents (and people) who use this crate or change it. Each
 statement below was checked against the source in `src/` for version 1.10.2.
@@ -45,8 +45,13 @@ the crate generate the DDL.
 | `migrate_opt(yaml, db_url, &MigrationOptions)` | the same with options |
 | `migrate(yaml, &mut Transaction, dry_run, file_name, &opt)` | applies inside **your** transaction (you commit). `dry_run: Some(&f)` hands each table's SQL to `f` instead of executing it. `file_name` only labels errors |
 | `parse_yaml_schema(yaml, file_name)` | parse only, no database: `OrderedHashMap<Schema>`, with templates resolved |
-| `loader::load_info_schema(db_name, &mut Transaction)` | introspection: what the database has now, as `InfoSchemaType` (schema → table → `PgTable`: columns, PK, FKs, indexes, triggers, grants, owner) |
+| `loader::load_info_schema(db_name, &mut Transaction)` | introspection: what the database has now, as `InfoSchemaType` (schema → table → `PgTable`: columns, PK, FKs, indexes, triggers, grants, owner, and since 2.2.0 the table and column comments - before, none was ever read, and a mixed-case table name failed the read) |
 | `set_logger(slog::Logger)` | feature `slog` only: executed SQL is logged at debug |
+| `superset_bundle(yaml, file_name, &SupersetDatabase)` | since 2.2.0: the parsed schema's tables (templates left out) as Apache Superset's v1 import bundle - `Vec<(path, YAML)>`: `metadata.yaml`, `databases/<name>.yaml`, `datasets/<name>/<schema>.<table>.yaml`; no file name begins with `.` or `_` (Superset's import passes over those) |
+| `superset_bundle_db(&mut Transaction, &SupersetDatabase)` | the same for the live database's tables, read by `load_info_schema` |
+| `superset::zip(&files, root) -> Result` | the bundle as the ZIP Superset imports: under one folder (Superset drops the first path part), stored, CRC-32; SG-E072 past 65,535 files or 4 GiB (no ZIP64) |
+| `SupersetDatabase::new(name, uri)` / `::existing(name, uri, uuid) -> Result` | the connection: by a UUID made from its name (made, or one of that name taken over), or one Superset has already (lower-cased; SG-E073 for no UUID), kept as it is - the only way `superset import-datasources` works, as it cannot give the masked password; a `password=` query parameter is moved into the user info, masked; `{:?}` masks it too. An import takes over a dataset of the same table, a hand-made one too - leave such tables out with `datasets_of_*` + `retain` |
+| `superset::datasets_of_schemas(&[Schema])` / `datasets_of_info`, `superset::bundle(datasets, db, SystemTime)` | the steps apart, e.g. to filter the tables; a fixed time makes the bundle the same every time. Re-imported, a bundle resets what was edited of its datasets in Superset |
 
 `migrate1` / `migrate_opt` connect without TLS. For TLS, or to apply several
 files atomically, open the transaction yourself and call `migrate`.

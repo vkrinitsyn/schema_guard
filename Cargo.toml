@@ -1,6 +1,6 @@
 [package]
 name = "schema_guard_tokio"
-version = "2.1.1"
+version = "2.2.0"
 authors = ["V.Krinitsyn <V.Krinitsyn@gmail.com>"]
 edition = "2018"
 description = "Schema Guard: YAML based Relation Database Schema Management tool for Postgres"

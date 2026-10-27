@@ -292,29 +292,20 @@ async fn load_info_cc(db_name: &str, db: &mut tokio_postgres::Transaction<'_>) -
     }
 
     for (schema, tbls) in &mut data {
-        let mut query = String::new();
-        let mut tables = String::new();
-        for tn in tbls.keys() {
-            if !query.is_empty() {
-                query.push(',');
-                tables.push(',');
-            }
-            query.push_str(format!("'{}.{}'::regclass", schema, tn).as_str());
-            tables.push_str(format!("'{}.{}'", schema, tn).as_str());
-        }
-        if !query.is_empty() {
-            let result = db.query(format!("SELECT * from
-(SELECT tabs.table_schema, tabs.table_name,
-    pg_catalog.obj_description(tabs.table_name::regclass::oid) as table_comment
-    FROM information_schema.tables tabs
-    WHERE tabs.table_schema not in ('pg_catalog', 'information_schema') AND tabs.table_catalog = $1
-     and tabs.table_name in ({})
-    ) as ist WHERE ist.table_comment is not null order by 1,2", tables).as_str(), &[&db_name]).await
-                .map_err(|e| tr!("loader.catalog_db", what = "information_schema.tables", db = db_name, err = crate::pg_error(&e)))?;
+        // [loader] the tables by schema and name as parameters: a `'schema.Table'::regclass`
+        // of raw names failed on a mixed-case table (`"User"`), and the comments were asked
+        // of `table_name in ('schema.table', ...)`, which no bare name is - none was ever
+        // read (review of 2026-10-26)
+        let names: Vec<String> = tbls.keys().cloned().collect();
+        if !names.is_empty() {
+            let result = db.query("SELECT c.relname, obj_description(c.oid, 'pg_class') FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = $1 AND c.relname = ANY($2) AND obj_description(c.oid, 'pg_class') IS NOT NULL",
+                &[&schema, &names]).await
+                .map_err(|e| tr!("loader.catalog_db", what = "pg_class", db = db_name, err = crate::pg_error(&e)))?;
             for r in result {
-                // let table_schema: &str = r.get(0);
-                let table_name: &str = r.get(1);
-                let table_comment: &str = r.get(2);
+                let table_name: &str = r.get(0);
+                let table_comment: &str = r.get(1);
                 if let Some(t) = tbls.get_mut(table_name) {
                     t.table_comment = Some(table_comment.to_string());
                 }
@@ -332,18 +323,16 @@ async fn load_info_cc(db_name: &str, db: &mut tokio_postgres::Transaction<'_>) -
                 }
             }
 
-            let result = db.query(format!("select * from
-(SELECT cols.table_schema, cols.table_name, cols.column_name, pg_catalog.col_description(cols.table_name::regclass::oid, cols.ordinal_position::int) as column_comment
-FROM information_schema.columns cols
-WHERE cols.table_schema not in ('pg_catalog', 'information_schema')  AND cols.table_catalog = $1
- AND cols.table_name in ({})
-) as iss where iss.column_comment is not null", tables).as_str(), &[&db_name]).await
-                .map_err(|e| tr!("loader.catalog_db", what = "information_schema.columns", db = db_name, err = crate::pg_error(&e)))?;
+            let result = db.query("SELECT c.relname, a.attname, col_description(c.oid, a.attnum) FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+    WHERE n.nspname = $1 AND c.relname = ANY($2) AND col_description(c.oid, a.attnum) IS NOT NULL",
+                &[&schema, &names]).await
+                .map_err(|e| tr!("loader.catalog_db", what = "pg_attribute", db = db_name, err = crate::pg_error(&e)))?;
             for r in result {
-                // let table_schema: &str = r.get(0);
-                let table_name: &str = r.get(1);
-                let column_name: &str = r.get(2);
-                let column_comment: &str = r.get(3);
+                let table_name: &str = r.get(0);
+                let column_name: &str = r.get(1);
+                let column_comment: &str = r.get(2);
                 if let Some(t) = tbls.get_mut(table_name) {
                     if let Some(c) = t.columns.get_mut(column_name) {
                         c.column_comment = Some(column_comment.to_string());
@@ -351,11 +340,13 @@ WHERE cols.table_schema not in ('pg_catalog', 'information_schema')  AND cols.ta
                 }
             }
 
-            let result = db.query(format!("SELECT relname, a.attname, indisprimary, indisunique
+            let result = db.query("SELECT pc.relname, a.attname, i.indisprimary, i.indisunique
                     FROM pg_index i
                     JOIN pg_class pc on pc.oid = i.indrelid
+                    JOIN pg_namespace n ON n.oid = pc.relnamespace
                     JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
-                    WHERE (i.indisprimary or i.indisunique) and i.indrelid in ({})", query).as_str(), &[]).await
+                    WHERE (i.indisprimary or i.indisunique) AND n.nspname = $1 AND pc.relname = ANY($2)",
+                &[&schema, &names]).await
                 .map_err(|e| tr!("loader.catalog", what = "pg_index", err = crate::pg_error(&e)))?;
             for r in result {
                 let table_name: &str = r.get(0);

@@ -46,6 +46,7 @@ pub mod column;
 pub mod index;
 pub mod grant;
 pub mod schema;
+pub mod superset;
 pub mod utils;
 mod yaml_validator;
 
@@ -212,6 +213,24 @@ pub fn load_schema_from_src(data: String) -> Result<Yaml, String> {
         },
         Err(e) => Err(tr!("lib.parsing", err = e)),
     }
+}
+
+/// A YAML schema as Apache Superset's import bundle - each file a path and its YAML;
+/// `superset::zip` makes the ZIP Superset imports. A template table is left out
+pub fn superset_bundle(schema: Yaml, file_name: &str, db: &superset::SupersetDatabase)
+    -> Result<Vec<(String, String)>, String> {
+    let schemas = parse_yaml_schema(schema, file_name)?;
+    Ok(superset::bundle(&superset::datasets_of_schemas(&schemas.list), db, std::time::SystemTime::now()))
+}
+
+/// The tables of the database a transaction runs in - every schema but the system's,
+/// read as `migrate` reads them - as Apache Superset's import bundle
+pub async fn superset_bundle_db(db: &mut tokio_postgres::Transaction<'_>, target: &superset::SupersetDatabase)
+    -> Result<Vec<(String, String)>, String> {
+    let db_name: String = db.query("select current_database()", &[])
+        .await.map_err(|e| tr!("lib.db_connection", err = pg_error(&e)))?[0].get(0);
+    let info = load_info_schema(db_name.as_str(), db).await?;
+    Ok(superset::bundle(&superset::datasets_of_info(&info), target, std::time::SystemTime::now()))
 }
 
 /// filename is for logging reference only
