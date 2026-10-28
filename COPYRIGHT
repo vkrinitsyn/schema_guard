@@ -1,0 +1,6 @@
+Schema Guard (sg) and Schema Guard Enterprise (sge) - the relational database schema management tool.
+
+Copyright (c) 2020-2026 DBinvent
+
+Licensed under the MIT license: see LICENSE. The libraries it is built with, and
+their licenses, are the dependencies Cargo.toml names.
