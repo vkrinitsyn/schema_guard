@@ -1,5 +1,12 @@
 ## SchemaGuard (tokio)
 
+[![ci](https://github.com/vkrinitsyn/schema_guard/actions/workflows/ci.yml/badge.svg)](https://github.com/vkrinitsyn/schema_guard/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/vkrinitsyn/schema_guard/graph/badge.svg)](https://codecov.io/gh/vkrinitsyn/schema_guard)
+[![audit](https://github.com/vkrinitsyn/schema_guard/actions/workflows/audit.yml/badge.svg)](https://github.com/vkrinitsyn/schema_guard/actions/workflows/audit.yml)
+[![crates.io](https://img.shields.io/crates/v/schema_guard_tokio.svg)](https://crates.io/crates/schema_guard_tokio)
+[![docs.rs](https://docs.rs/schema_guard_tokio/badge.svg)](https://docs.rs/schema_guard_tokio)
+[![license](https://img.shields.io/crates/l/schema_guard_tokio.svg)](LICENSE)
+
 > [!NOTE]
 > Standard non tokio edition available in `std` branch:  https://github.com/vkrinitsyn/schema_guard/tree/std
 

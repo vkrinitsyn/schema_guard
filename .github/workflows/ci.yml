@@ -1,0 +1,60 @@
+name: ci
+
+# The tests with each feature set, and the line coverage of them all: under 71% fails
+# the run. The coverage goes to Codecov (the README badge) through GitHub's OIDC token -
+# no secret; the repository is enabled once at codecov.io.
+on:
+  push:
+    branches-ignore: ["dependabot/**"]   # their pull request runs it
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # a branch's newer push cancels its older run; on main each run stands (the badge):
+  # a cancelled run there shows as failing
+  group: ci-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # default; with slog, the executed SQL logged at debug
+        features: ["", "--features slog"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      # tests/pg_errors.rs makes a throwaway cluster of its own with initdb, on a unix
+      # socket: the binaries, not a service. Without them its tests skip and pass
+      - run: sudo apt-get update && sudo apt-get install -y postgresql
+      - run: cargo test ${{ matrix.features }}
+
+  coverage:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # Codecov's OIDC upload
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      # the gate counts on it too: a skipped cluster drops the coverage under it.
+      # 71: the 71.5% measured when it was set (table.rs's DDL mostly untested), not 90
+      # as diff-doc-rs - raise it as the tests grow
+      - run: sudo apt-get update && sudo apt-get install -y postgresql
+      - run: cargo llvm-cov --features slog --lcov --output-path lcov.info --fail-under-lines 71
+      - uses: codecov/codecov-action@v7
+        with:
+          files: lcov.info
+          use_oidc: true
+          # a fork's pull request has no token: the gate above holds without the upload
+          fail_ci_if_error: false

@@ -16,7 +16,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: audit-${{ github.ref }}
+  # a branch's newer push cancels its older run; on main each run stands (the badge):
+  # a cancelled run there shows as failing
+  group: audit-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}
   cancel-in-progress: true
 
 jobs:
