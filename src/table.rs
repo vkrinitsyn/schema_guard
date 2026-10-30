@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use crate::error::{DeployError, DeployStep};
 use std::fmt::Write;
 
@@ -7,6 +7,7 @@ use yaml_rust2::Yaml;
 use yaml_rust2::yaml::Array;
 
 use crate::column::{Column, Trig};
+use crate::changes::{sql_only, Changes, DryRun};
 use crate::loader::{FKTable, InfoSchemaType, PgTable};
 use crate::MigrationOptions;
 #[cfg(feature = "slog")]
@@ -292,20 +293,37 @@ impl Table {
     }
 
     /// build a create or alter sql, and run it: a statement Postgres refuses is returned
-    /// as its native error (error.rs)
-    #[allow(unused_mut)]
+    /// as its native error (error.rs). A dry run hands its receiver the SQL alone
     pub async fn deploy_pg(
+        &self,
+        dbc: &mut InfoSchemaType,
+        db: &mut tokio_postgres::Transaction<'_>,
+        schema: &String,
+        file: &str,
+        dry_run: Option<&(dyn Fn(Vec<String>) -> Result<(), String> + Send + Sync)>,
+        opt: &MigrationOptions,
+    ) -> Result<bool, DeployError> {
+        let plan = dry_run.map(sql_only);
+        self.deploy_plan_pg(dbc, db, schema, file, plan.as_ref().map(|p| p as &DryRun<'_>), opt).await
+    }
+
+    /// [dry-run] deploy_pg, a dry run handing its callback the table's schema.table and
+    /// the changes to make there, beside the SQL
+    #[allow(unused_mut)]
+    pub async fn deploy_plan_pg(
         &self,
         dbc: &mut InfoSchemaType,
         db: &mut tokio_postgres::Transaction<'_>,
         schema: &String, // this
         file: &str,
-        dry_run: Option<&(dyn Fn(Vec<String>) -> Result<(), String> + Send + Sync)>,
+        callback: Option<&DryRun<'_>>,
         opt: &MigrationOptions,
     ) -> Result<bool, DeployError> {
         let mut sql = String::new();
         let mut comments = String::new();
         let mut exec = false;
+        // [dry-run] what this deploy changes, beside its SQL
+        let mut changes = Changes::default();
         let do_create = match dbc.get_mut(schema) {
             None => SchemaAndTable,
             Some(mut ss) => match ss.get_mut(&self.table_name) {
@@ -363,6 +381,7 @@ impl Table {
                                 ).as_str(), &mut sql, false);
                             }
                             let _ = ts.columns.insert(dc.get_name(), def);
+                            changes.columns.push(dc.name.clone());
                             exec = true;
                         } else {
                             // Column exists - check for type changes
@@ -391,6 +410,7 @@ impl Table {
                                         );
                                         append(&alter_sql, &mut sql, opt.with_ddl_retry);
                                         let _ = ts.columns.insert(dc.get_name(), desired_def);
+                                        changes.alter(&dc.name);
                                         exec = true;
                                     }
                                     TypeChange::SizeReduction => {
@@ -402,6 +422,7 @@ impl Table {
                                         if opt.with_size_cut {
                                             append(&alter_sql, &mut sql, opt.with_ddl_retry);
                                             let _ = ts.columns.insert(dc.get_name(), desired_def);
+                                            changes.alter(&dc.name);
                                             exec = true;
                                         } else {
                                             if opt.without_failfast {
@@ -424,6 +445,7 @@ impl Table {
                                         if opt.with_size_cut {
                                             append(&alter_sql, &mut sql, opt.with_ddl_retry);
                                             let _ = ts.columns.insert(dc.get_name(), desired_def);
+                                            changes.alter(&dc.name);
                                             exec = true;
                                         } else {
                                             if opt.without_failfast {
@@ -451,6 +473,7 @@ impl Table {
                                     schema, self.table_name, dc.name
                                 );
                                 append(&alter_sql, &mut sql, opt.with_ddl_retry);
+                                changes.alter(&dc.name);
                                 exec = true;
                             }
                         }
@@ -462,6 +485,7 @@ impl Table {
                     }
                     if let Some(o) = &ts.owner {
                         if self.owner.len() > 0 && &self.owner != o {
+                            changes.owner = true;
                             append(format!("ALTER TABLE {}.{} OWNER TO {}",
                                            schema, self.table_name, self.owner
                             ).as_str(), &mut sql, opt.with_ddl_retry);
@@ -480,6 +504,7 @@ impl Table {
                                 if let Some(def) = dt.trig_def(schema, &self.table_name) {
                                     let _ = writeln!(sql, "{}\n", def);
                                     let _ = ts.triggers.insert(dt.get_name(), desired_trigger);
+                                    changes.triggers.push(dt.name.clone());
                                     exec = true;
                                 }
                             } else if trigger_changed {
@@ -492,6 +517,7 @@ impl Table {
                                     let _ = writeln!(sql, "{}", drop_sql);
                                     let _ = writeln!(sql, "{}\n", create_sql);
                                     let _ = ts.triggers.insert(dt.get_name(), desired_trigger);
+                                    changes.triggers.push(dt.name.clone());
                                     exec = true;
                                 } else {
                                     if opt.without_failfast {
@@ -554,6 +580,7 @@ impl Table {
                             if !add_pk_sql.is_empty() {
                                 append(&add_pk_sql, &mut sql, opt.with_ddl_retry);
                             }
+                            changes.primary_key = true;
                             // Update dbc with new PK
                             ts.primary_key = if desired_pk.is_empty() {
                                 None
@@ -627,6 +654,8 @@ impl Table {
                 owner: if self.owner.len() > 0 { Some(self.owner.clone()) } else { None },
             };
 
+            changes.create = true;
+            changes.columns = self.columns.list.iter().map(|c| c.name.clone()).collect();
             for dc in &self.columns.list {
                 let cd = dc.column_def(schema, &self.table_name, file)?;
                 let _ = st.columns.insert(dc.get_name(), cd);
@@ -698,6 +727,7 @@ impl Table {
                     if let Some(td) = dt.trig_def(schema, &self.table_name) {
                         let _ = writeln!(sql, "{}\n", td);
                         st.triggers.insert(dt.get_name(), dt.to_pg_trigger());
+                        changes.triggers.push(dt.name.clone());
                     }
                 }
             }
@@ -708,6 +738,7 @@ impl Table {
         }
         if exec {
             if self.description.len() > 0 {
+                changes.comment = true;
                 let _ = writeln!(
                     comments,
                     "COMMENT ON TABLE {}.{} IS '{}'; \n",
@@ -717,6 +748,11 @@ impl Table {
 
         }
 
+        // [dry-run] the indexes and grants the builders change: they record them in dbc
+        let state = |dbc: &InfoSchemaType| dbc.get(schema).and_then(|s| s.get(&self.table_name))
+            .map(|t| (t.indexes.clone(), t.grants.clone())).unwrap_or_default();
+        let (indexes_before, grants_before) = state(dbc);
+
         // Generate CREATE INDEX statements for indexes defined in YAML
         let index_builder = crate::index::IndexBuilder::new(&self.columns);
         let indexes_sql = index_builder.generate_sql(schema, &self.table_name, dbc, opt)?;
@@ -724,17 +760,24 @@ impl Table {
         // Generate GRANT/REVOKE statements for grants defined in YAML
         let grant_builder = crate::grant::GrantBuilder::new(&self.grant, &self.table_name);
         let grants_sql = grant_builder.generate_sql(schema, dbc, opt)?;
+        let (indexes_after, grants_after) = state(dbc);
+        changes.indexes = changed(&indexes_before, &indexes_after);
+        changes.grants = changed(&grants_before, &grants_after);
 
         let mut data = String::new();
         for row in &self.data {
             self.insert(&mut data, row, schema);
         }
+        if !data.is_empty() {
+            changes.rows = self.data.len();
+        }
 
         let exec = exec || !indexes_sql.is_empty() || !grants_sql.is_empty();
 
-        match dry_run {
-            Some(store) => {
-                Ok(store(vec![sql, comments, indexes_sql, grants_sql, data]).map(|_| false)?)
+        match callback {
+            Some(callback) => {
+                let table = format!("{}.{}", schema, self.table_name);
+                Ok(callback(vec![sql, comments, indexes_sql, grants_sql, data], Some(&table), changes.some()).map(|_| false)?)
             }
             None => {
                 if exec {
@@ -844,9 +887,25 @@ impl Table {
     }
 
     /// build the foreign keys, and run them: a statement Postgres refuses is returned
-    /// as its native error (error.rs)
-    #[allow(unused, unused_mut)]
+    /// as its native error (error.rs). A dry run hands its receiver the SQL alone
     pub async fn deploy_fk_pg(
+        &self,
+        schemas: &OrderedHashMap<Schema>,
+        dbc: &mut InfoSchemaType,
+        db: &mut tokio_postgres::Transaction<'_>,
+        schema: &String,
+        is_retry: bool,
+        file: &str,
+        dry_run: Option<&(dyn Fn(Vec<String>) -> Result<(), String> + Send + Sync)>,
+    ) -> Result<bool, DeployError> {
+        let plan = dry_run.map(sql_only);
+        self.deploy_fk_plan_pg(schemas, dbc, db, schema, is_retry, file, plan.as_ref().map(|p| p as &DryRun<'_>)).await
+    }
+
+    /// [dry-run] deploy_fk_pg, a dry run handing its callback the table's schema.table
+    /// and its foreign keys to add, beside the SQL
+    #[allow(unused, unused_mut)]
+    pub async fn deploy_fk_plan_pg(
         &self,
         // target: &FileVersion,
         schemas: &OrderedHashMap<Schema>, //FilesMap,
@@ -855,10 +914,11 @@ impl Table {
         schema: &String,
         is_retry: bool,
         file: &str,
-        dry_run: Option<&(dyn Fn(Vec<String>) -> Result<(), String> + Send + Sync)>,
+        callback: Option<&DryRun<'_>>,
     ) -> Result<bool, DeployError> {
         let mut sql = String::new();
-        let mut fk_list = HashMap::new();
+        // by column - two columns may reference one table - in one order: the same SQL on every run
+        let mut fk_list = BTreeMap::new();
         if let Some(ss) = dbc.get(schema) {
             if let Some(ts) = ss.get(&self.table_name) {
                 for dc in &self.columns.list {
@@ -880,9 +940,8 @@ impl Table {
                                 }
                             }
                             let fk_columns = pks(&fk_schema, &fk_table, schemas);
-                            let key = format!("{}.{}", fk_schema, fk_table);
                             if fk_columns.len() > 0 {
-                                fk_list.insert(key, FKTable {
+                                fk_list.insert(dc.name.clone(), FKTable {
                                     column: fk_columns,
                                     name: dc.get_name(),
                                     schema: fk_schema,
@@ -896,22 +955,24 @@ impl Table {
             }
         };
         let exec = fk_list.len() > 0;
+        let changes = Changes { foreign_keys: fk_list.keys().cloned().collect(), ..Default::default() };
         for ff in fk_list.values() {
             if let Some(mut ss) = dbc.get_mut(schema) {
                 if let Some(mut ts) = ss.get_mut(&self.table_name) {
                     ts.fks.insert(ff.name.clone(), ff.clone());
                 }
             }
+            let fk_name = pg_name(format!("fk_{}_{}_{}_{}", schema, self.table_name, ff.table, ff.name));
             append(format!(
-                "ALTER TABLE {}.{} ADD CONSTRAINT fk_{}_{}_{}_{} FOREIGN KEY ({}) REFERENCES {}.{} ({}) {}",
-                schema, self.table_name, schema, self.table_name, ff.table,
-                ff.name, ff.name, ff.schema, &ff.table, ff.columns(), ff.sql
+                "ALTER TABLE {}.{} ADD CONSTRAINT {} FOREIGN KEY ({}) REFERENCES {}.{} ({}) {}",
+                schema, self.table_name, fk_name, ff.name, ff.schema, &ff.table, ff.columns(), ff.sql
             ).as_str(), &mut sql, is_retry);
         }
 
-        match dry_run {
-            Some(store) => {
-                Ok(store(vec![sql]).map(|_| false)?)
+        match callback {
+            Some(callback) => {
+                let table = format!("{}.{}", schema, self.table_name);
+                Ok(callback(vec![sql], Some(&table), changes.some()).map(|_| false)?)
             }
             None => {
                 if exec {
@@ -1057,6 +1118,13 @@ enum CreateST {
     None,
     SchemaAndTable,
     TableOnly,
+}
+
+/// [dry-run] the keys whose values differ between two states - added, changed, removed -
+/// in order
+fn changed<V: PartialEq>(before: &HashMap<String, V>, after: &HashMap<String, V>) -> Vec<String> {
+    let keys: std::collections::BTreeSet<&String> = before.keys().chain(after.keys()).collect();
+    keys.into_iter().filter(|k| before.get(*k) != after.get(*k)).cloned().collect()
 }
 
 fn append(sql: &str, buff: &mut String, retry: bool) {
@@ -1260,6 +1328,42 @@ fn analyze_type_change(existing: &str, desired: &str) -> TypeChange {
 }
 
 #[inline]
+/// [fk] A constraint's name as PostgreSQL keeps it, 63 bytes: a longer one cut there
+/// could be another column's too - two columns referencing one table. Cut shorter, and
+/// a hash of the whole name after it, the same on every run (FNV-1a)
+fn pg_name(name: String) -> String {
+    if name.len() <= 63 {
+        return name;
+    }
+    let mut h: u32 = 0x811c_9dc5;
+    for b in name.bytes() {
+        h ^= b as u32;
+        h = h.wrapping_mul(0x0100_0193);
+    }
+    let mut cut = 54;
+    while !name.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    format!("{}_{:08x}", &name[..cut], h)
+}
+
+#[cfg(test)]
+mod fk_name_tests {
+    use super::pg_name;
+
+    #[test]
+    fn a_long_constraint_name_is_cut_with_its_hash() {
+        let short = "fk_s_orders_users_user_id".to_string();
+        assert_eq!(pg_name(short.clone()), short);
+        let base = "fk_analytics_customer_subscription_events_customer_subscriptions_";
+        let (a, b) = (pg_name(format!("{}created_by", base)), pg_name(format!("{}updated_by", base)));
+        assert_eq!((a.len(), b.len()), (63, 63));
+        assert_ne!(a, b);
+        assert_eq!(a, pg_name(format!("{}created_by", base)));
+        assert!(pg_name(format!("fk_схема_{}", "т".repeat(40))).len() <= 63);
+    }
+}
+
 fn pks(schema: &String, table: &String, sks: &OrderedHashMap<Schema>) -> HashSet<String> {
     let mut pk = HashSet::new();
     if let Some(fkst) = sks.get(schema) {

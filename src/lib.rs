@@ -40,6 +40,8 @@ pub use error::{pg_error, pg_error_in, set_lc_messages, DeployError, DeployStep}
 #[macro_use]
 mod i18n;
 mod error;
+/// [dry-run] the dry run's receiver, and the changes it is handed
+pub mod changes;
 pub mod loader;
 pub mod table;
 pub mod column;
@@ -165,6 +167,16 @@ pub async fn migrate(schema: Yaml, db: &mut tokio_postgres::Transaction<'_>,
                dry_run: Option<&(dyn Fn(Vec<String>) -> Result<(), String> + Sync + Send)>, file_name: &str,
                opt: &MigrationOptions
 ) -> Result<usize, String> {
+    let plan = dry_run.map(changes::sql_only);
+    migrate_plan(schema, db, plan.as_ref().map(|p| p as &changes::DryRun<'_>), file_name, opt).await
+}
+
+/// [dry-run] migrate, a dry run handing its callback each table's schema.table and the
+/// changes to make there, beside the SQL
+pub async fn migrate_plan(schema: Yaml, db: &mut tokio_postgres::Transaction<'_>,
+               callback: Option<&changes::DryRun<'_>>, file_name: &str,
+               opt: &MigrationOptions
+) -> Result<usize, String> {
     log_info(&format!("{} {} {}", APP_NAME, env!("CARGO_PKG_VERSION"), tr!("lib.banner")));
 
     // let mut db = dbc.transaction().map_err(|e| format!("{}", e))?;
@@ -176,14 +188,13 @@ pub async fn migrate(schema: Yaml, db: &mut tokio_postgres::Transaction<'_>,
     let mut info = load_info_schema(db_name.as_str(), db).await?;
     let schemas = parse_yaml_schema(schema, file_name)?;
     for s in &schemas.list {
-        cnt += s.deploy_all_tables(&mut info, db, dry_run, opt).await?;
+        cnt += s.deploy_all_tables_plan_pg(&mut info, db, callback, opt).await.map_err(|e| e.to_string())?;
     }
 
     for s in &schemas.list {
-        cnt += s.deploy_all_fk(&schemas, &mut info, db, opt.with_ddl_retry, dry_run).await?;
+        cnt += s.deploy_all_fk_plan_pg(&schemas, &mut info, db, opt.with_ddl_retry, callback).await.map_err(|e| e.to_string())?;
     }
 
-    // let _ = db.commit().map_err(|e| format!("committing error: {}", e))?;
     Ok(cnt)
 }
 

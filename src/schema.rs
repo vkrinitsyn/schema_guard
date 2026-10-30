@@ -94,10 +94,20 @@ impl Schema {
     }
 
     /// deploy every table but the templates: a statement Postgres refuses is returned as
-    /// its native error (error.rs)
+    /// its native error (error.rs). A dry run hands its receiver the SQL alone
     pub async fn deploy_all_tables_pg(&self, schema: &mut InfoSchemaType,
                                    db: &mut tokio_postgres::Transaction<'_>,
                                    dry_run: Option<&(dyn Fn(Vec<String>) -> Result<(), String> + Send + Sync)>,
+                                   opt: &MigrationOptions) -> Result<usize, DeployError> {
+        let plan = dry_run.map(crate::changes::sql_only);
+        self.deploy_all_tables_plan_pg(schema, db, plan.as_ref().map(|p| p as &crate::changes::DryRun<'_>), opt).await
+    }
+
+    /// [dry-run] deploy_all_tables_pg, a dry run handing its callback each table's
+    /// schema.table and the changes to make there, beside the SQL
+    pub async fn deploy_all_tables_plan_pg(&self, schema: &mut InfoSchemaType,
+                                   db: &mut tokio_postgres::Transaction<'_>,
+                                   callback: Option<&crate::changes::DryRun<'_>>,
                                    opt: &MigrationOptions) -> Result<usize, DeployError> {
         let mut cnt = 0;
         for t in &self.tables.list {
@@ -105,7 +115,7 @@ impl Schema {
             if t.is_template() {
                 continue;
             }
-            if t.deploy_pg(schema, db, &self.schema_name, self.file.as_str(), dry_run, opt).await? {
+            if t.deploy_plan_pg(schema, db, &self.schema_name, self.file.as_str(), callback, opt).await? {
                 cnt += 1;
             }
         }
@@ -124,19 +134,31 @@ impl Schema {
     }
 
     /// deploy every table's foreign keys but the templates': a statement Postgres refuses
-    /// is returned as its native error (error.rs)
+    /// is returned as its native error (error.rs). A dry run hands its receiver the SQL
+    /// alone
     pub async fn deploy_all_fk_pg(&self, schemas: &OrderedHashMap<Schema>,
                                schema: &mut InfoSchemaType,
                                db: &mut tokio_postgres::Transaction<'_>,
                                retry: bool,
                                dry_run: Option<&(dyn Fn(Vec<String>) -> Result<(), String> + Send + Sync)>) -> Result<usize, DeployError> {
+        let plan = dry_run.map(crate::changes::sql_only);
+        self.deploy_all_fk_plan_pg(schemas, schema, db, retry, plan.as_ref().map(|p| p as &crate::changes::DryRun<'_>)).await
+    }
+
+    /// [dry-run] deploy_all_fk_pg, a dry run handing its callback each table's
+    /// schema.table and its foreign keys to add, beside the SQL
+    pub async fn deploy_all_fk_plan_pg(&self, schemas: &OrderedHashMap<Schema>,
+                               schema: &mut InfoSchemaType,
+                               db: &mut tokio_postgres::Transaction<'_>,
+                               retry: bool,
+                               callback: Option<&crate::changes::DryRun<'_>>) -> Result<usize, DeployError> {
         let mut cnt = 0;
         for t in &self.tables.list {
             // Skip template tables - they are not created in DB
             if t.is_template() {
                 continue;
             }
-            if t.deploy_fk_pg(schemas, schema, db, &self.schema_name, retry, self.file.as_str(), dry_run).await? {
+            if t.deploy_fk_plan_pg(schemas, schema, db, &self.schema_name, retry, self.file.as_str(), callback).await? {
                 cnt += 1;
             }
         }

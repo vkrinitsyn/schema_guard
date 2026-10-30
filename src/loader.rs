@@ -143,8 +143,10 @@ pub struct PgGrant {
 
 impl FKTable {
     pub(crate) fn columns(&self) -> String {
+        let mut cols: Vec<&String> = self.column.iter().collect();
+        cols.sort();   // the same SQL on every run
         let mut cs = String::new();
-        for c in &self.column {
+        for c in cols {
             if cs.len() > 0 {
                 cs.push_str(", ");
             }
@@ -814,7 +816,9 @@ impl PgTable {
     pub(crate) fn pks(&self) -> Option<String> {
         let mut pks = ", PRIMARY KEY (".to_string();
         let mut cnt = 0;
-        for c in self.columns.values() {
+        let mut cols: Vec<&PgColumnDfn> = self.columns.values().collect();
+        cols.sort_by_key(|c| c.sort_order);   // the table's column order, not the map's
+        for c in cols {
             if c.pk {
                 cnt += 1;
                 if cnt > 1 {

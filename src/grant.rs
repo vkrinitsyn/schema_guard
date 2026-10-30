@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Write;
 
 use crate::loader::{InfoSchemaType, PgGrant};
@@ -40,8 +40,9 @@ impl<'a> GrantBuilder<'a> {
             HashMap::new()
         };
 
-        // Build desired grants from YAML
-        let mut desired_grants: HashMap<String, HashSet<String>> = HashMap::new();
+        // Build desired grants from YAML, ordered by grantee and privilege: the same
+        // SQL on every run - a dry run's plan is compared with an approved one
+        let mut desired_grants: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         let mut grant_options: HashMap<String, bool> = HashMap::new();
 
         for yg in self.grants {
@@ -59,7 +60,7 @@ impl<'a> GrantBuilder<'a> {
 
             for (priv_name, grantee) in privileges {
                 if !grantee.is_empty() {
-                    let entry = desired_grants.entry(grantee.clone()).or_insert_with(HashSet::new);
+                    let entry = desired_grants.entry(grantee.clone()).or_insert_with(BTreeSet::new);
                     if priv_name == "all" {
                         // ALL expands to all table privileges
                         entry.insert("SELECT".to_string());
@@ -86,14 +87,15 @@ impl<'a> GrantBuilder<'a> {
             // Determine what needs to be granted (new privileges)
             let privs_to_grant: Vec<&String> = match existing {
                 None => desired_privs.iter().collect(),
-                Some(ex) => desired_privs.difference(&ex.privileges).collect(),
+                Some(ex) => desired_privs.iter().filter(|p| !ex.privileges.contains(*p)).collect(),
             };
 
             // Determine what needs to be revoked (removed privileges)
-            let privs_to_revoke: Vec<&String> = match existing {
+            let mut privs_to_revoke: Vec<&String> = match existing {
                 None => vec![],
-                Some(ex) => ex.privileges.difference(desired_privs).collect(),
+                Some(ex) => ex.privileges.iter().filter(|p| !desired_privs.contains(*p)).collect(),
             };
+            privs_to_revoke.sort();
 
             // Generate REVOKE statements for changed privileges
             if !privs_to_revoke.is_empty() {
@@ -144,7 +146,7 @@ impl<'a> GrantBuilder<'a> {
                     if let Some(ts) = ss.get_mut(&self.table_name) {
                         ts.grants.insert(grantee.clone(), PgGrant {
                             grantee: grantee.clone(),
-                            privileges: desired_privs.clone(),
+                            privileges: desired_privs.iter().cloned().collect(),
                             with_grant_option: *grant_options.get(grantee).unwrap_or(&false),
                         });
                     }
@@ -153,9 +155,12 @@ impl<'a> GrantBuilder<'a> {
         }
 
         // Handle grantees that exist in DB but not in YAML (revoke all)
-        for (grantee, existing) in &existing_grants {
+        let mut existing_sorted: Vec<(&String, &PgGrant)> = existing_grants.iter().collect();
+        existing_sorted.sort_by(|a, b| a.0.cmp(b.0));
+        for (grantee, existing) in existing_sorted {
             if !desired_grants.contains_key(grantee) {
-                let privs_str: Vec<&str> = existing.privileges.iter().map(|s| s.as_str()).collect();
+                let mut privs_str: Vec<&str> = existing.privileges.iter().map(|s| s.as_str()).collect();
+                privs_str.sort();
                 if !privs_str.is_empty() {
                     let revoke_stmt = format!(
                         "REVOKE {} ON {}.{} FROM {};\n",
@@ -193,5 +198,34 @@ impl<'a> GrantBuilder<'a> {
         }
 
         Ok(grants_sql)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn grant(all: &str, select: &str) -> YGrant {
+        let s = |v: &str| v.to_string();
+        YGrant {
+            all: s(all), select: s(select), insert: s(""), update: s(""), delete: s(""),
+            truncate: s(""), references: s(""), trigger: s(""), create: s(""), connect: s(""),
+            temporary: s(""), execute: s(""), usage: s(""), with_grant_option: false, by: s(""),
+        }
+    }
+
+    /// a dry run's plan is compared with an approved one: the SQL must not follow a
+    /// hash map's order, which changes with each map
+    #[test]
+    fn grants_in_one_order() {
+        let grants = vec![grant("app", ""), grant("", "report"), grant("", "audit")];
+        let opt = MigrationOptions::default();
+        let sql = |_| GrantBuilder::new(&grants, "t").generate_sql("s", &mut InfoSchemaType::new(), &opt).unwrap();
+        let first = sql(0);
+        assert_eq!(first, "GRANT DELETE, INSERT, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE ON s.t TO app;\n\
+                           GRANT SELECT ON s.t TO audit;\nGRANT SELECT ON s.t TO report;\n");
+        for i in 1..20 {
+            assert_eq!(sql(i), first);
+        }
     }
 }

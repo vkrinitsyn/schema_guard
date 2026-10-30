@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::column::Column;
 use crate::loader::{InfoSchemaType, PgIndex, PgIndexColumn};
@@ -27,7 +27,7 @@ pub struct DesiredIndexColumn {
 /// Collects and generates CREATE INDEX statements for table columns
 pub struct IndexBuilder {
     /// index_name -> DesiredIndex
-    index_groups: HashMap<String, DesiredIndex>,
+    index_groups: BTreeMap<String, DesiredIndex>,   // by name: the same SQL on every run
 }
 
 impl IndexBuilder {
@@ -35,7 +35,7 @@ impl IndexBuilder {
     /// - Columns with index name "+" or empty get individual indexes (auto-generated names)
     /// - Columns with the same explicit index name are combined into a composite index
     pub fn new(columns: &OrderedHashMap<Column>) -> Self {
-        let mut index_groups: HashMap<String, DesiredIndex> = HashMap::new();
+        let mut index_groups: BTreeMap<String, DesiredIndex> = BTreeMap::new();
         let mut auto_index_counter = 0usize;
 
         for col in &columns.list {
