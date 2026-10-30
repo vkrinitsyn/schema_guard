@@ -1,14 +1,16 @@
 [package]
 name = "schema_guard_tokio"
-version = "2.2.0"
+version = "2.2.1"
 authors = ["V.Krinitsyn <V.Krinitsyn@gmail.com>"]
-edition = "2018"
+edition = "2024"
 description = "Schema Guard: YAML based Relation Database Schema Management tool for Postgres"
 homepage = "https://github.com/vkrinitsyn/schema_guard"
 readme = "README.md"
 documentation = "https://www.dbinvent.com/sge/guide/getting-started#declarative"
 repository = "https://github.com/vkrinitsyn/schema_guard"
 license = "MIT"
+keywords = ["schema_guard", "sge", "postgres", "sql"]
+links = "https://dbinvent.com/"
 
 [lib]
 name = "schema_guard_tokio"
