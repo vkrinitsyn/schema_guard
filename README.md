@@ -1,7 +1,7 @@
 ## SchemaGuard (tokio)
 
 [![ci](https://github.com/vkrinitsyn/schema_guard/actions/workflows/ci.yml/badge.svg)](https://github.com/vkrinitsyn/schema_guard/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/vkrinitsyn/schema_guard/graph/badge.svg)](https://codecov.io/gh/vkrinitsyn/schema_guard)
+[![coverage](https://raw.githubusercontent.com/vkrinitsyn/schema_guard/badges/coverage.svg?sanitize=true)](https://github.com/vkrinitsyn/schema_guard/actions/workflows/ci.yml)
 [![audit](https://github.com/vkrinitsyn/schema_guard/actions/workflows/audit.yml/badge.svg)](https://github.com/vkrinitsyn/schema_guard/actions/workflows/audit.yml)
 [![crates.io](https://img.shields.io/crates/v/schema_guard_tokio.svg)](https://crates.io/crates/schema_guard_tokio)
 [![docs.rs](https://docs.rs/schema_guard_tokio/badge.svg)](https://docs.rs/schema_guard_tokio)
@@ -12,10 +12,11 @@
 
 > [!TIP]
 > Also available the **Schema Guard Enterprise  ([sge](https://dbinvent.com/sge))** - is the complete tool built on this
-> [crate](https://crates.io/crates/schema_guard), and
-> just as free: MIT, no license key. It adds a command line, versioned SQL scripts
-> tracked in a history table, dry runs, ETL snapshots and loads, git as a script
-> source, and YT Cluster support. See [dbinvent.com](https://dbinvent.com).
+> [crate](https://crates.io/crates/schema_guard), It adds a command line, versioned SQL scripts
+> tracked in a history table like Flyway *plus*, dry runs, ETL: snapshots and loads, git as a script
+> source, Apache Superset schema format dump and `plan` phase like Terraform,
+> All provided for free by [DBinvent.com](https://dbinvent.com) the YT Cluster - 
+> The Infinite Scale Postgres cluster solution.
 
 ### Merging YAML defined schema and data into PostgreSQL database
 
