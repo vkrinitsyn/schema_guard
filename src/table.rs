@@ -822,6 +822,8 @@ impl Table {
         file.map(|f| tr!("table.in_file", file = f)).unwrap_or_default()
     }
 
+    /// One `data` row as an INSERT: each value a literal of its own. A `'` in a value is
+    /// doubled (2.3.1) - `O'Brien` ended the literal before, and the statement with it
     fn insert(&self, data: &mut String, row: &Vec<String>, schema: &String) {
         let mut names = String::new();
         let mut vals = String::new();
@@ -839,9 +841,9 @@ impl Table {
                 vals.push_str(", ");
             }
             names.push_str(c.name.as_str());
-            vals.push_str("'");
-            vals.push_str(row[i].as_str());
-            vals.push_str("'");
+            vals.push('\'');
+            vals.push_str(&sql_literal(row[i].as_str()));
+            vals.push('\'');
         }
         let _ = writeln!(data, " insert into {}.{} ({}) values ({}) ON CONFLICT ({}) DO NOTHING;", schema, self.table_name, names, vals, pks);
     }
@@ -1377,8 +1379,9 @@ fn pks(schema: &String, table: &String, sks: &OrderedHashMap<Schema>) -> HashSet
     }
     pk
 }
-/// A comment's text inside `'...'`: a `'` doubled - a description read from the database
-/// (`loader`, since 2.2.0) may hold one, `Customer's orders`, and the COMMENT failed
+/// A text inside `'...'`: a `'` doubled. A comment's - a description read from the database
+/// (`loader`, since 2.2.0) may hold one, `Customer's orders`, and the COMMENT failed - and,
+/// since 2.3.1, a `data` row's value
 fn sql_literal(t: &str) -> String {
     t.replace('\'', "''")
 }
@@ -1390,6 +1393,29 @@ mod comment_tests {
     fn a_comment_with_a_quote_is_one_literal() {
         assert_eq!(super::sql_literal("Customer's orders"), "Customer''s orders");
         assert_eq!(super::sql_literal("plain"), "plain");
+    }
+
+    /// [2.3.1] a `data` row's value with a `'` is one literal too: the row is inserted as
+    /// it is written, and a value cannot end its literal to add SQL of its own
+    #[test]
+    fn a_data_value_with_a_quote_is_one_literal() {
+        use yaml_rust2::YamlLoader;
+        let yaml = "columns:\n\
+            \x20 - column: {name: id, type: int, constraint: {primaryKey: true}}\n\
+            \x20 - column: {name: name, type: text}\n\
+            data:\n  - ['1', \"O'Brien\"]\n  - ['2', \"x'); drop table t; --\"]\n  - ['3', \"it''s\"]\n  - ['4', plain]\n";
+        let t = super::Table::new(&YamlLoader::load_from_str(yaml).unwrap().remove(0), "t", None).unwrap();
+        let mut sql = String::new();
+        for row in &t.data {
+            t.insert(&mut sql, row, &"app".to_string());
+        }
+        let lines: Vec<&str> = sql.lines().map(str::trim).collect();
+        assert_eq!(lines, vec![
+            "insert into app.t (id, name) values ('1', 'O''Brien') ON CONFLICT (id) DO NOTHING;",
+            "insert into app.t (id, name) values ('2', 'x''); drop table t; --') ON CONFLICT (id) DO NOTHING;",
+            "insert into app.t (id, name) values ('3', 'it''''s') ON CONFLICT (id) DO NOTHING;",
+            "insert into app.t (id, name) values ('4', 'plain') ON CONFLICT (id) DO NOTHING;",
+        ]);
     }
 }
 

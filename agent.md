@@ -166,11 +166,13 @@ database:
 
 ## Traps (each verified in the code)
 
-1. **`--` cuts a value.** Every string field passes through `utils::as_esc`,
-   which truncates at the first `--`: `type`, `defaultValue`, `sql`,
-   `constraint`, `description`, trigger fields, index fields. A default such
-   as `'a--b'` or a comment inside `sql` is silently cut. Never put `--` in a
-   value.
+1. **`--` outside a quoted text cuts a value.** Every SQL field passes through
+   `utils::as_esc`: `type`, `defaultValue`, `sql`, `constraint`, trigger
+   fields, index fields. What follows a `--` is taken as the author's SQL
+   comment and dropped. Since 2.3.1 a `--` inside `'...'`, `"..."` or
+   `$tag$...$tag$` is kept (a default such as `'a--b'` is whole), and a
+   `description`, of a table or a column, is never cut: it is text, written
+   into the COMMENT as one literal.
 2. **Columns are nullable unless declared otherwise.** `nullable` defaults to
    `true`. And because `NOT NULL` is never added later, a column first
    deployed as nullable stays nullable.
@@ -187,9 +189,11 @@ database:
    YAML run** (its PK is read from the YAML, not from the database). Otherwise
    the FK is skipped without an error.
 7. **`data` rows are inserted only in a run where that table had a DDL
-   change**, so a row added to an unchanged table is not inserted. Values are
-   written as `'<value>'` with **no escaping**: a value containing `'` breaks
-   the statement, and there is no way to write NULL.
+   change**, so a row added to an unchanged table is not inserted. A value is
+   written as one literal, `'<value>'`: since 2.3.1 a `'` in it is doubled, so
+   `O'Brien` is that name (before, it broke the statement). Write a value as
+   the text it is - a `''` in the YAML is two quotes in the row. There is no
+   way to write NULL.
 8. **Parsed but not acted on:** `data_file`, the table `transaction` key,
    `pg_partman`, and the schema-level `roles`, `functions`, `procedures`,
    `views`, `sequences`.

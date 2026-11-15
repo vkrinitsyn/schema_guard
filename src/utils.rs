@@ -9,18 +9,53 @@ pub fn as_str_esc(input: &Yaml, field: &str) -> String {
     as_esc(as_str(input, field, "").as_str())
 }
 
+/// A value of the YAML as SQL text: what follows a `--` is the author's SQL comment and is cut off.
+/// A `--` inside a quoted text - `'...'`, `"..."` or `$tag$...$tag$` - is part of that text and is
+/// kept: `'a--b'::text` as a default stayed `'a` before 2.3.1, a statement that does not parse.
 #[inline]
 pub fn as_esc(val: &str) -> String {
-    match val.find("--") {
-        None => {
-            if val.len() > 0 {
-                format!("{}", val)
-            } else {
-                "".into()
-            }
-        }
+    match comment_start(val) {
+        None => val.to_string(),
         Some(i) => val[0..i].trim().into(),
     }
+}
+
+/// Where the SQL comment of `val` starts: its first `--` outside every quoted text
+fn comment_start(val: &str) -> Option<usize> {
+    let bytes = val.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            // '...' and "...": to the closing quote; a doubled quote inside closes and opens again
+            q @ (b'\'' | b'"') => {
+                i += 1;
+                while i < bytes.len() && bytes[i] != q {
+                    i += 1;
+                }
+            }
+            // $tag$...$tag$ (the tag may be empty): to the same tag again
+            b'$' => {
+                if let Some(len) = dollar_tag(&bytes[i..]) {
+                    let tag = &val[i..i + len];
+                    // never closed: all of the rest is its text, and no comment follows
+                    let end = val[i + len..].find(tag)?;
+                    i += len + end + len - 1;
+                }
+            }
+            b'-' if bytes.get(i + 1) == Some(&b'-') => return Some(i),
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// The length of a dollar-quote tag at the start of `bytes` (`$$`, `$body$`), if there is one
+fn dollar_tag(bytes: &[u8]) -> Option<usize> {
+    let close = bytes.iter().skip(1).position(|b| *b == b'$')? + 1;
+    let name = &bytes[1..close];
+    let ok = name.iter().all(|b| b.is_ascii_alphanumeric() || *b == b'_') && !name.first().is_some_and(|b| b.is_ascii_digit());
+    ok.then_some(close + 1)
 }
 
 #[inline]
@@ -210,6 +245,26 @@ mod tests {
         }
     }
 
+
+    /// [2.3.1] a `--` starts the author's comment only outside a quoted text
+    #[test]
+    fn a_double_dash_inside_a_quoted_text_is_kept() {
+        assert_eq!(as_esc("now() -- when it was made"), "now()");
+        assert_eq!(as_esc("-- all of it"), "");
+        assert_eq!(as_esc("plain"), "plain");
+        assert_eq!(as_esc(""), "");
+        assert_eq!(as_esc("a - b"), "a - b", "one dash is no comment");
+        assert_eq!(as_esc("'a--b'::text"), "'a--b'::text");
+        assert_eq!(as_esc("'a--b'::text -- the default"), "'a--b'::text");
+        assert_eq!(as_esc("'it''s -- fine' -- cut here"), "'it''s -- fine'", "a doubled quote stays inside");
+        assert_eq!(as_esc("\"odd--name\" -- c"), "\"odd--name\"");
+        assert_eq!(as_esc("$$ a -- b $$ -- c"), "$$ a -- b $$");
+        assert_eq!(as_esc("$fn$ x -- y $fn$::text -- c"), "$fn$ x -- y $fn$::text");
+        assert_eq!(as_esc("price > $1 -- a parameter, no quote"), "price > $1");
+        assert_eq!(as_esc("'never closed -- so it is its text"), "'never closed -- so it is its text");
+        assert_eq!(as_esc("$$never closed -- text"), "$$never closed -- text");
+        assert_eq!(as_esc("\u{442}\u{435}\u{441}\u{442} '--' -- \u{434}\u{430}"), "\u{442}\u{435}\u{441}\u{442} '--'", "not cut inside a character");
+    }
 
     #[test]
     fn safe_test() {

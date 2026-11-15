@@ -162,7 +162,9 @@ impl Column {
             name: crate::utils::safe_sql_name(crate::utils::as_str_esc(input, "name")),
             column_type: crate::utils::as_str_esc(input, "type"),
             default_value: input["defaultValue"].as_str().map(|s| crate::utils::as_esc(s)),
-            description: crate::utils::as_str_esc(input, "description"),
+            // [2.3.1] whole, as a table's is: a description is no SQL - it goes into the COMMENT as one
+            // literal (table.rs sql_literal), so a `--` in it is text, not the start of a comment
+            description: crate::utils::as_str(input, "description", ""),
             sql: crate::utils::as_str_esc(input, "sql"),
             constraint,
             index,
