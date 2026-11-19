@@ -32,8 +32,10 @@ tokio = { version = "^1.54.1", features = ["test-util", "full"], optional = true
 tokio-postgres = { version = "^0.7.18", optional = true }
 # [sqlite] SQLite, embedded: turso, as yt-lite uses it (owner, 2026-11-19) - no system library
 turso = { version = "=0.9.0-pre.5", optional = true }
-# [mysql] MySQL through sqlx (its MySQL driver, pure Rust, on tokio): no client library
-sqlx = { version = "0.8.6", optional = true, default-features = false, features = ["mysql", "runtime-tokio"] }
+# [mysql] MySQL through sqlx (its MySQL driver, pure Rust, on tokio): no client library. 0.9 with TLS
+# (rustls) and without its RSA: sqlx 0.8 took rsa 0.9 (RUSTSEC-2023-0071, cargo audit failed, 2026-11-19);
+# MySQL 8's caching_sha2 sign-in goes over TLS, which its server makes by itself
+sqlx = { version = "0.9.0", optional = true, default-features = false, features = ["mysql", "runtime-tokio", "tls-rustls-ring-webpki"] }
 # the messages, in locales/*.yml: compiled in, each in every language - see src/i18n.rs
 # (no i18n table name in brackets anywhere in this file: rust-i18n would read it as
 # its configuration)

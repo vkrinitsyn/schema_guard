@@ -106,6 +106,9 @@ An index, trigger or view made again in an attached database is qualified with i
 | `mysql::load_info_schema(&mut MySqlConnection, &[databases]).await` | information_schema (TABLES, COLUMNS, STATISTICS, KEY_COLUMN_USAGE, TRIGGERS) into `InfoSchemaType`: a schema per database; none named, every one but MySQL's own |
 
 - A schema is a MySQL database, made when not there; `public` is the connection's current one.
+- sqlx 0.9 with TLS (rustls) and without RSA (RUSTSEC-2023-0071 in sqlx 0.8's rsa): MySQL 8's
+  default sign-in, caching_sha2_password, needs TLS over TCP - a server makes its certificate by
+  itself - or a Unix socket.
 - In place, by `ALTER TABLE`: ADD COLUMN, MODIFY COLUMN (type, nullability, default,
   auto_increment), ADD / DROP PRIMARY KEY, indexes; foreign keys added after every table.
   Compared as MySQL keeps them: an integer's display width dropped, its synonyms (`bool`,
