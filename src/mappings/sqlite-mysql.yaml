@@ -16,7 +16,10 @@ default:
     - { match: '(?:varchar|character varying|nvarchar|varying character|native character)\s*\(\s*(?:1638[4-9]|1639\d|16[4-9]\d\d|1[7-9]\d{3}|[2-9]\d{4}|\d{6,})\s*\)', to: 'longtext', note: 'past 16383 characters MySQL makes no varchar of utf8mb4' }
     - { match: '(?:varchar|character varying|nvarchar|varying character|native character)\s*\(\s*(\d+)\s*\)', to: 'varchar($1)', note: 'SQLite did not hold the length: a longer value fails in strict mode, and is cut short otherwise' }
     - { match: '(?:char|character|nchar)\s*\(\s*(\d+)\s*\)', to: 'char($1)', note: 'SQLite did not hold the length: a longer value fails in strict mode, and is cut short otherwise' }
+    # [review 2026-11-19] MySQL indexes no longtext (its error 1170, sge-sqlite's snapshot to sge-mysql)
+    - { match: 'text|clob|varchar|character varying|char|character', indexed: true, to: 'varchar(255)', note: 'an index on it: MySQL indexes no longtext - varchar(255), a longer value fails' }
     - { match: 'text|clob|varchar|character varying|char|character', to: 'longtext' }
+    - { match: 'blob', indexed: true, to: 'varbinary(255)', note: 'an index on it: MySQL indexes no longblob - varbinary(255), a longer value fails' }
     - { match: 'blob', to: 'longblob' }
     - { match: 'date', to: 'date' }
     - { match: 'datetime|timestamp', to: 'datetime(6)' }

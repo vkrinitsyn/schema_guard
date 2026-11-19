@@ -30,7 +30,9 @@ postgres:
     - { from: bpchar, mysql.8.0: refused, mysql.5.7: refused, sqlite.3: text }
     - { from: char, mysql.8.0: char(1), mysql.5.7: char(1), sqlite.3: text }
     - { from: text, mysql.8.0: longtext, mysql.5.7: longtext, sqlite.3: text }
+    - { from: text, indexed: true, mysql.8.0: varchar(255), mysql.5.7: varchar(255), sqlite.3: text }
     - { from: bytea, mysql.8.0: longblob, mysql.5.7: longblob, sqlite.3: blob }
+    - { from: bytea, indexed: true, mysql.8.0: varbinary(255), mysql.5.7: varbinary(255), sqlite.3: blob }
     - { from: date, mysql.8.0: date, mysql.5.7: date, sqlite.3: text }
     - { from: timestamptz(3), mysql.8.0: datetime(3), mysql.5.7: datetime(3), sqlite.3: text }
     - { from: timestamptz, mysql.8.0: datetime(6), mysql.5.7: datetime(6), sqlite.3: text }
@@ -88,8 +90,10 @@ sqlite:
     - { from: varchar(20000), postgres.16: varchar(20000), mysql.8.0: longtext, mysql.5.7: longtext }
     - { from: char(3), postgres.16: char(3), mysql.8.0: char(3), mysql.5.7: char(3) }
     - { from: text, postgres.16: text, mysql.8.0: longtext, mysql.5.7: longtext }
+    - { from: text, indexed: true, postgres.16: text, mysql.8.0: varchar(255), mysql.5.7: varchar(255) }
     - { from: varchar, postgres.16: text, mysql.8.0: longtext, mysql.5.7: longtext }
     - { from: blob, postgres.16: bytea, mysql.8.0: longblob, mysql.5.7: longblob }
+    - { from: blob, indexed: true, postgres.16: bytea, mysql.8.0: varbinary(255), mysql.5.7: varbinary(255) }
     - { from: date, postgres.16: date, mysql.8.0: date, mysql.5.7: date }
     - { from: datetime, postgres.16: timestamp, mysql.8.0: datetime(6), mysql.5.7: datetime(6) }
     - { from: time, postgres.16: time, mysql.8.0: time(6), mysql.5.7: time(6) }

@@ -657,7 +657,9 @@ fn plan_table(db: &str, t: &Table, have: &SqTable, existing_names: &std::collect
                         }
                     }
                 }
-                if nullable(c) == h.notnull {
+                // [review 2026-11-19] a key's nullability as SQLite reports it is no change: its
+                // INTEGER PRIMARY KEY says notnull 0 - a snapshot's `nullable: false` on a key rebuilt it
+                if nullable(c) == h.notnull && !is_pk(c) {
                     rebuild.push(format!("{}: {}", c.name, if nullable(c) { "NOT NULL dropped" } else { "NOT NULL" }));
                 }
                 let want_d = c.default_value.as_ref().map(|d| d.trim()).filter(|d| !d.is_empty()).map(default_sql).map(|d| norm_default(&d));

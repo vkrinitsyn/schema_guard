@@ -357,6 +357,10 @@ only. The tests under `tests/` that need PostgreSQL carry `required-features = [
 
 ## State on 2026-11-19
 
+- 2.4.0 published (sqlite through turso, mysql, the mappings). 2.4.1, uncommitted: a type rule's
+  `indexed: true` (an indexed text to MySQL's varchar(255), as MySQL indexes no longtext), a key's
+  nullability no change in SQLite - both found by sge-sqlite and sge-mysql's round trip.
+
 - Version 2.4.0, uncommitted, not published (crates.io has 2.3.1): the database features,
   `source` and the mappings with their matrix, SQLite. 2.4, not 3: `postgres` is a default,
   so a user of the defaults gets what 2.x gave (owner, 2026-11-19).

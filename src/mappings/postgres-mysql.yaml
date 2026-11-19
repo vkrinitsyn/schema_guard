@@ -29,7 +29,10 @@ default:
     - { match: 'bpchar', refuse: 'a char of a length the snapshot left out: write it char(n)' }
     - { match: 'char|character', to: 'char(1)' }
     # PostgreSQL's text has no length; MySQL's text ends at 64 KiB
+    # [review 2026-11-19] MySQL indexes no longtext (its error 1170): an indexed text a varchar
+    - { match: 'text|citext', indexed: true, to: 'varchar(255)', note: 'an index on it: MySQL indexes no longtext - varchar(255), a longer value fails' }
     - { match: 'text|citext', to: 'longtext' }
+    - { match: 'bytea', indexed: true, to: 'varbinary(255)', note: 'an index on it: MySQL indexes no longblob - varbinary(255), a longer value fails' }
     - { match: 'bytea', to: 'longblob' }
     - { match: 'date', to: 'date' }
     # no time zone kept in MySQL: the value as stored, in UTC

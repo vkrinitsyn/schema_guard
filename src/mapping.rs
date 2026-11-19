@@ -124,6 +124,9 @@ struct ValueRule {
     note: Option<String>,
     /// [review 2026-11-18] a default's rule for columns of this type only (the source's type)
     when_type: Option<Regex>,
+    /// [mapping] a type rule for a column that is indexed (a key, unique, an index), or one that
+    /// is not: MySQL indexes no longtext (2026-11-19)
+    when_indexed: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -199,7 +202,8 @@ fn value_rules(list: &Yaml, place: &str) -> Result<Vec<ValueRule>, String> {
             Some(t) => Some(Regex::new(&format!("(?i)^(?:{})$", t)).map_err(|e| format!("{}: type `{}`: {}", at, t, e))?),
             None => None,
         };
-        out.push(ValueRule { matcher, action, note: r["note"].as_str().map(String::from), when_type });
+        let when_indexed = r["indexed"].as_bool();
+        out.push(ValueRule { matcher, action, note: r["note"].as_str().map(String::from), when_type, when_indexed });
     }
     Ok(out)
 }
@@ -303,7 +307,7 @@ impl Mapping {
         }
         let rules = self.rules_for(&source, target);
         let mut out = schema.clone();
-        let mut w = Walk { rules, refused: Vec::new(), notes: Vec::new() };
+        let mut w = Walk { rules, refused: Vec::new(), notes: Vec::new(), indexed: false };
         if let Yaml::Hash(top) = &mut out {
             top.insert(Yaml::String("source".into()), Yaml::String(target.name()));
             if let Some(Yaml::Array(schemas)) = top.get_mut(&Yaml::String("database".into())) {
@@ -324,6 +328,8 @@ struct Walk<'a> {
     rules: Vec<&'a Rules>,
     refused: Vec<String>,
     notes: Vec<String>,
+    /// the column being walked is indexed: a key, unique, or of an index
+    indexed: bool,
 }
 
 fn key(k: &str) -> Yaml {
@@ -361,6 +367,9 @@ impl<'a> Walk<'a> {
     fn value(&mut self, pick: fn(&Rules) -> &Vec<ValueRule>, value: &str, what: &str, of_type: Option<&str>) -> Option<String> {
         for r in &self.rules {
             for rule in pick(r) {
+                if rule.when_indexed.map(|w| w != self.indexed).unwrap_or(false) {
+                    continue;
+                }
                 if let (Some(want), Some(ty)) = (&rule.when_type, of_type) {
                     if !want.is_match(ty.trim()) {
                         continue;
@@ -546,6 +555,12 @@ impl<'a> Walk<'a> {
         let name = format!("{}.{}", table, c.get(&key("name")).and_then(|v| v.as_str()).unwrap_or(""));
         let what = format!("column {}", name);
         let source_type = c.get(&key("type")).and_then(text_of);
+        // [mapping] indexed: of an index, a key, or of a `sql` that makes it one (UNIQUE, PRIMARY KEY)
+        let sql_up = c.get(&key("sql")).and_then(text_of).unwrap_or_default().to_uppercase();
+        let pk = matches!(c.get(&key("constraint")), Some(Yaml::Hash(h)) if h.get(&key("primaryKey")).and_then(|v| v.as_bool()) == Some(true));
+        self.indexed = matches!(c.get(&key("index")), Some(v) if !matches!(v, Yaml::Null | Yaml::BadValue)
+                                 && v.as_bool() != Some(false))
+            || pk || sql_up.contains("UNIQUE") || sql_up.contains("PRIMARY KEY");
         if let Some(ty) = source_type.clone() {
             match self.value(|r| &r.types, &ty, &format!("{}: type", what), None) {
                 Some(mapped) => { c.insert(key("type"), Yaml::String(mapped)); }
@@ -982,9 +997,12 @@ default:
         let feature_type = m["feature_type"].as_str().unwrap();
         for row in m["types"].as_vec().unwrap() {
             let from = text_of(&row["from"]).unwrap();
+            // [mapping] a row for an indexed column: the column of an index
+            let indexed = row["indexed"].as_bool() == Some(true);
+            let ix = if indexed { "                index:\n                  name: i\n" } else { "" };
             for &t in &targets {
                 let want = text_of(&row[t]).unwrap();
-                let got = mapping_for(src, t).apply(&one(source, &from, None, "", "", ""), &Source::parse(t).unwrap());
+                let got = mapping_for(src, t).apply(&one(source, &from, None, ix, "", ""), &Source::parse(t).unwrap());
                 let ok = match (&got, want.as_str()) {
                     (Err(r), "refused") => r.iter().any(|e| e.contains("public.t.c: type")),
                     (Ok(out), w) => column_of(&out.schema)["type"].as_str() == Some(w),
@@ -1051,7 +1069,8 @@ default:
         for (from, to, _) in BUILTIN {
         let m = &all[*from];
         let default_type = m["default_type"].as_str().unwrap();
-        let types: Vec<String> = m["types"].as_vec().unwrap().iter().map(|r| text_of(&r["from"]).unwrap()).collect();
+        let types: Vec<(String, bool)> = m["types"].as_vec().unwrap().iter()
+            .map(|r| (text_of(&r["from"]).unwrap(), r["indexed"].as_bool() == Some(true))).collect();
         let defaults: Vec<(String, String)> = m["defaults"].as_vec().unwrap().iter()
             .map(|r| (text_of(&r["from"]).unwrap(), r["type"].as_str().unwrap_or(default_type).to_string())).collect();
         let features: Vec<(String, Option<String>)> = m["features"].as_vec().unwrap().iter()
@@ -1061,8 +1080,9 @@ default:
                 .chain(mapping.versions.iter().map(|(c, r)| (c.name(), r))).collect();
             for (set, rules) in sets {
                 for (i, r) in rules.types.iter().enumerate() {
-                    let first = |v: &str| rules.types.iter().position(|x| x.matcher.is_match(v.trim()));
-                    if !types.iter().any(|v| first(v) == Some(i)) {
+                    let first = |v: &str, ix: bool| rules.types.iter().position(|x|
+                        x.when_indexed.map(|w| w == ix).unwrap_or(true) && x.matcher.is_match(v.trim()));
+                    if !types.iter().any(|(v, ix)| first(v, *ix) == Some(i)) {
                         missing.push(format!("{}-{} {}: types[{}] `{}`", from, to, set, i, r.matcher.as_str()));
                     }
                 }
