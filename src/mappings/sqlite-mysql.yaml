@@ -1,0 +1,53 @@
+# [mapping] SQLite's schemas written as MySQL's (src/mapping.rs): the rules as in
+# postgres-mysql.yaml; the types as sqlite-postgres.yaml reads them.
+from: sqlite
+to: mysql
+default:
+  types:
+    - { match: 'tinyint', to: 'tinyint' }
+    - { match: 'smallint|int2', to: 'smallint' }
+    - { match: 'integer|int|mediumint|bigint|int8|unsigned big int', to: 'bigint', note: "SQLite's integers are 64-bit; an integer primary key counted by itself there needs auto_increment here" }
+    - { match: 'boolean|bool', to: 'tinyint(1)' }
+    - { match: 'real|float|double|double precision', to: 'double' }
+    - { match: '(?:numeric|decimal)\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)', to: 'decimal($1,$2)' }
+    - { match: '(?:numeric|decimal)\s*\(\s*(\d+)\s*\)', to: 'decimal($1)' }
+    - { match: 'numeric|decimal', refuse: 'a numeric with no precision: MySQL keeps decimal(10,0) - give its precision and scale' }
+    # [review 2026-11-19] past 16383 characters a varchar of utf8mb4 is no longer created
+    - { match: '(?:varchar|character varying|nvarchar|varying character|native character)\s*\(\s*(?:1638[4-9]|1639\d|16[4-9]\d\d|1[7-9]\d{3}|[2-9]\d{4}|\d{6,})\s*\)', to: 'longtext', note: 'past 16383 characters MySQL makes no varchar of utf8mb4' }
+    - { match: '(?:varchar|character varying|nvarchar|varying character|native character)\s*\(\s*(\d+)\s*\)', to: 'varchar($1)', note: 'SQLite did not hold the length: a longer value fails in strict mode, and is cut short otherwise' }
+    - { match: '(?:char|character|nchar)\s*\(\s*(\d+)\s*\)', to: 'char($1)', note: 'SQLite did not hold the length: a longer value fails in strict mode, and is cut short otherwise' }
+    - { match: 'text|clob|varchar|character varying|char|character', to: 'longtext' }
+    - { match: 'blob', to: 'longblob' }
+    - { match: 'date', to: 'date' }
+    - { match: 'datetime|timestamp', to: 'datetime(6)' }
+    - { match: 'time', to: 'time(6)' }
+    - { match: 'json', to: 'json' }
+    - { match: 'uuid', to: 'char(36)' }
+  defaults:
+    - { match: 'current_timestamp', type: 'date', to: '(CURRENT_DATE)' }
+    # [review 2026-11-19] MySQL takes CURRENT_TIMESTAMP as written on a datetime or timestamp only; on any other
+    # type (SQLite keeps it in text) as an expression
+    - { match: 'current_timestamp', type: 'datetime|timestamp', to: 'CURRENT_TIMESTAMP(6)' }
+    - { match: 'current_timestamp', to: '(CURRENT_TIMESTAMP)' }
+    - { match: 'current_date', to: '(CURRENT_DATE)' }
+    - { match: 'current_time', to: '(CURRENT_TIME)' }
+    - { match: '\(.*\)', refuse: "an expression of SQLite's own functions: write it for MySQL by hand" }
+  features:
+    - { at: table.triggers, drop: true }
+    - { at: column.index.using, value: btree, keep: true }
+    - { at: column.index.using, refuse: "an index method SQLite has not" }
+    - { at: table.data, keep: true, note: "its rows as written: SQLite's values are not converted" }
+    - { at: table.data_file, keep: true, note: "its file's rows as written: SQLite's values are not converted" }
+versions:
+  # json from 5.7.8, a default of an expression from 8.0.13, as in postgres-mysql.yaml
+  - for: mysql.5
+    types:
+      - { match: 'json', refuse: 'json needs MySQL 5.7.8 at least: map it by hand to longtext' }
+    defaults:
+      - { match: 'current_date|current_time', refuse: 'an expression as a default needs MySQL 8.0.13' }
+      - { match: 'current_timestamp', type: 'date', refuse: 'a date column defaulting to the date is an expression, which needs MySQL 8.0.13' }
+      - { match: 'current_timestamp', type: 'datetime|timestamp', to: 'CURRENT_TIMESTAMP(6)' }
+      - { match: 'current_timestamp', refuse: 'CURRENT_TIMESTAMP on a column of no date type is an expression, which needs MySQL 8.0.13' }
+  # from 8 on the default rules hold: the newest case at or below a version is its, so 8 has one of
+  # its own, empty - else mysql.5's would reach 8 too ([review 2026-11-19]: kept, it is needed)
+  - for: mysql.8

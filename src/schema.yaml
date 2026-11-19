@@ -3,6 +3,9 @@ uri: database
 schema:
   type: object
   items:
+    # [mapping] the vendor and version the schema was taken from: postgres.16 (src/mapping.rs)
+    source:
+      type: string
     database:
       type: array
       items:

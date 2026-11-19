@@ -1,0 +1,185 @@
+# [mapping] The mappings' matrix (owner, 2026-11-18): a section a source vendor, in it a row a type,
+# default or feature of that vendor's, a column a target - what that target's version makes of it.
+# src/mapping.rs's tests check every cell, and that every rule of every mapping file is reached by
+# a row of its source's section: a rule added with no row here fails them. A cell: the written
+# value, `refused`, or for a feature `keep`, `drop`, `refused`. `default_type`: a default row's
+# column type when the row gives none; `feature_type`: the column's type in a feature row.
+postgres:
+  source: postgres.16
+  default_type: timestamptz
+  feature_type: int4
+  targets: [mysql.8.0, mysql.5.7, sqlite.3]
+  types:
+    - { from: smallserial, mysql.8.0: smallint auto_increment, mysql.5.7: smallint auto_increment, sqlite.3: integer }
+    - { from: serial, mysql.8.0: int auto_increment, mysql.5.7: int auto_increment, sqlite.3: integer }
+    - { from: bigserial, mysql.8.0: bigint auto_increment, mysql.5.7: bigint auto_increment, sqlite.3: integer }
+    - { from: int2, mysql.8.0: smallint, mysql.5.7: smallint, sqlite.3: integer }
+    - { from: int4, mysql.8.0: int, mysql.5.7: int, sqlite.3: integer }
+    - { from: int8, mysql.8.0: bigint, mysql.5.7: bigint, sqlite.3: integer }
+    - { from: bool, mysql.8.0: tinyint(1), mysql.5.7: tinyint(1), sqlite.3: integer }
+    - { from: float4, mysql.8.0: float, mysql.5.7: float, sqlite.3: real }
+    - { from: float8, mysql.8.0: double, mysql.5.7: double, sqlite.3: real }
+    # as the loader writes it
+    - { from: "NUMERIC(12, 2)", mysql.8.0: "decimal(12,2)", mysql.5.7: "decimal(12,2)", sqlite.3: "numeric(12,2)" }
+    - { from: numeric(10), mysql.8.0: decimal(10), mysql.5.7: decimal(10), sqlite.3: numeric(10) }
+    - { from: numeric, mysql.8.0: refused, mysql.5.7: refused, sqlite.3: numeric }
+    - { from: money, mysql.8.0: "decimal(19,2)", mysql.5.7: "decimal(19,2)", sqlite.3: numeric }
+    - { from: varchar(80), mysql.8.0: varchar(80), mysql.5.7: varchar(80), sqlite.3: text }
+    - { from: varchar, mysql.8.0: refused, mysql.5.7: refused, sqlite.3: text }
+    - { from: bpchar(10), mysql.8.0: char(10), mysql.5.7: char(10), sqlite.3: text }
+    - { from: bpchar, mysql.8.0: refused, mysql.5.7: refused, sqlite.3: text }
+    - { from: char, mysql.8.0: char(1), mysql.5.7: char(1), sqlite.3: text }
+    - { from: text, mysql.8.0: longtext, mysql.5.7: longtext, sqlite.3: text }
+    - { from: bytea, mysql.8.0: longblob, mysql.5.7: longblob, sqlite.3: blob }
+    - { from: date, mysql.8.0: date, mysql.5.7: date, sqlite.3: text }
+    - { from: timestamptz(3), mysql.8.0: datetime(3), mysql.5.7: datetime(3), sqlite.3: text }
+    - { from: timestamptz, mysql.8.0: datetime(6), mysql.5.7: datetime(6), sqlite.3: text }
+    - { from: time(3), mysql.8.0: time(3), mysql.5.7: time(3), sqlite.3: text }
+    - { from: time, mysql.8.0: time(6), mysql.5.7: time(6), sqlite.3: text }
+    - { from: timetz, mysql.8.0: refused, mysql.5.7: refused, sqlite.3: text }
+    - { from: interval, mysql.8.0: refused, mysql.5.7: refused, sqlite.3: text }
+    - { from: uuid, mysql.8.0: char(36), mysql.5.7: char(36), sqlite.3: text }
+    - { from: jsonb, mysql.8.0: json, mysql.5.7: refused, sqlite.3: text }
+    - { from: inet, mysql.8.0: varchar(43), mysql.5.7: varchar(43), sqlite.3: text }
+    - { from: "int4[]", mysql.8.0: refused, mysql.5.7: refused, sqlite.3: refused }
+    - { from: tsvector, mysql.8.0: refused, mysql.5.7: refused, sqlite.3: refused }
+  defaults:
+    # on a column of `type` (timestamptz when none given)
+    - { from: "now()", type: date, mysql.8.0: (CURRENT_DATE), mysql.5.7: refused, sqlite.3: CURRENT_DATE }
+    - { from: "now()", mysql.8.0: CURRENT_TIMESTAMP(6), mysql.5.7: CURRENT_TIMESTAMP(6), sqlite.3: CURRENT_TIMESTAMP }
+    - { from: current_date, type: text, mysql.8.0: (CURRENT_DATE), mysql.5.7: refused, sqlite.3: CURRENT_DATE }
+    - { from: "gen_random_uuid()", type: uuid, mysql.8.0: (uuid()), mysql.5.7: refused, sqlite.3: refused }
+    - { from: "'a''b'::character varying", type: text, mysql.8.0: "'a''b'", mysql.5.7: "'a''b'", sqlite.3: "'a''b'" }
+    - { from: "nextval('s'::regclass)", type: int8, mysql.8.0: refused, mysql.5.7: refused, sqlite.3: refused }
+    - { from: "'a'::text || 'b'::text", type: text, mysql.8.0: refused, mysql.5.7: refused, sqlite.3: refused }
+    - { from: "0", type: int4, mysql.8.0: "0", mysql.5.7: "0", sqlite.3: "0" }
+  features:
+    - { at: column.index.using, value: btree, mysql.8.0: keep, mysql.5.7: keep, sqlite.3: keep }
+    - { at: column.index.using, value: hash, mysql.8.0: drop, mysql.5.7: drop, sqlite.3: refused }
+    - { at: column.index.using, value: gin, mysql.8.0: refused, mysql.5.7: refused, sqlite.3: refused }
+    - { at: column.index.using, value: gist, mysql.8.0: refused, mysql.5.7: refused, sqlite.3: refused }
+    - { at: column.index.using, value: brin, mysql.8.0: refused, mysql.5.7: refused, sqlite.3: refused }
+    - { at: column.index.using, value: spgist, mysql.8.0: refused, mysql.5.7: refused, sqlite.3: refused }
+    - { at: column.index.concurrently, value: "true", mysql.8.0: drop, mysql.5.7: drop, sqlite.3: drop }
+    - { at: column.index.nulls, value: LAST, mysql.8.0: drop, mysql.5.7: drop, sqlite.3: drop }
+    - { at: column.index.collate, value: C, mysql.8.0: drop, mysql.5.7: drop, sqlite.3: drop }
+    - { at: column.partition_by, value: RANGE, mysql.8.0: refused, mysql.5.7: refused, sqlite.3: refused }
+    - { at: table.triggers, mysql.8.0: drop, mysql.5.7: drop, sqlite.3: drop }
+    - { at: table.grant, mysql.8.0: drop, mysql.5.7: drop, sqlite.3: drop }
+    - { at: table.owner, mysql.8.0: drop, mysql.5.7: drop, sqlite.3: drop }
+    - { at: schema.owner, mysql.8.0: drop, mysql.5.7: drop, sqlite.3: drop }
+    - { at: table.data, mysql.8.0: keep, mysql.5.7: keep, sqlite.3: keep }
+    - { at: table.data_file, mysql.8.0: keep, mysql.5.7: keep, sqlite.3: keep }
+sqlite:
+  source: sqlite.3
+  default_type: datetime
+  feature_type: integer
+  targets: [postgres.16, mysql.8.0, mysql.5.7]
+  types:
+    - { from: tinyint, postgres.16: smallint, mysql.8.0: tinyint, mysql.5.7: tinyint }
+    - { from: smallint, postgres.16: smallint, mysql.8.0: smallint, mysql.5.7: smallint }
+    - { from: integer, postgres.16: bigint, mysql.8.0: bigint, mysql.5.7: bigint }
+    - { from: boolean, postgres.16: boolean, mysql.8.0: tinyint(1), mysql.5.7: tinyint(1) }
+    - { from: real, postgres.16: double precision, mysql.8.0: double, mysql.5.7: double }
+    - { from: "numeric(12,2)", postgres.16: "numeric(12,2)", mysql.8.0: "decimal(12,2)", mysql.5.7: "decimal(12,2)" }
+    - { from: numeric(10), postgres.16: numeric(10), mysql.8.0: decimal(10), mysql.5.7: decimal(10) }
+    - { from: numeric, postgres.16: numeric, mysql.8.0: refused, mysql.5.7: refused }
+    - { from: varchar(80), postgres.16: varchar(80), mysql.8.0: varchar(80), mysql.5.7: varchar(80) }
+    - { from: varchar(20000), postgres.16: varchar(20000), mysql.8.0: longtext, mysql.5.7: longtext }
+    - { from: char(3), postgres.16: char(3), mysql.8.0: char(3), mysql.5.7: char(3) }
+    - { from: text, postgres.16: text, mysql.8.0: longtext, mysql.5.7: longtext }
+    - { from: varchar, postgres.16: text, mysql.8.0: longtext, mysql.5.7: longtext }
+    - { from: blob, postgres.16: bytea, mysql.8.0: longblob, mysql.5.7: longblob }
+    - { from: date, postgres.16: date, mysql.8.0: date, mysql.5.7: date }
+    - { from: datetime, postgres.16: timestamp, mysql.8.0: datetime(6), mysql.5.7: datetime(6) }
+    - { from: time, postgres.16: time, mysql.8.0: time(6), mysql.5.7: time(6) }
+    - { from: json, postgres.16: jsonb, mysql.8.0: json, mysql.5.7: refused }
+    - { from: uuid, postgres.16: uuid, mysql.8.0: char(36), mysql.5.7: char(36) }
+    - { from: geometry, postgres.16: refused, mysql.8.0: refused, mysql.5.7: refused }
+  defaults:
+    - { from: CURRENT_TIMESTAMP, postgres.16: "(now() at time zone 'utc')", mysql.8.0: CURRENT_TIMESTAMP(6), mysql.5.7: CURRENT_TIMESTAMP(6) }
+    - { from: CURRENT_TIMESTAMP, type: date, postgres.16: "(now() at time zone 'utc')", mysql.8.0: (CURRENT_DATE), mysql.5.7: refused }
+    - { from: CURRENT_TIMESTAMP, type: text, postgres.16: "(now() at time zone 'utc')", mysql.8.0: (CURRENT_TIMESTAMP), mysql.5.7: refused }
+    - { from: CURRENT_DATE, type: date, postgres.16: CURRENT_DATE, mysql.8.0: (CURRENT_DATE), mysql.5.7: refused }
+    - { from: CURRENT_TIME, type: time, postgres.16: CURRENT_TIME, mysql.8.0: (CURRENT_TIME), mysql.5.7: refused }
+    - { from: "0", type: boolean, postgres.16: "false", mysql.8.0: "0", mysql.5.7: "0" }
+    - { from: "1", type: boolean, postgres.16: "true", mysql.8.0: "1", mysql.5.7: "1" }
+    - { from: "(lower('A'))", type: text, postgres.16: refused, mysql.8.0: refused, mysql.5.7: refused }
+    - { from: "'x'", type: text, postgres.16: "'x'", mysql.8.0: "'x'", mysql.5.7: "'x'" }
+  features:
+    - { at: table.triggers, postgres.16: drop, mysql.8.0: drop, mysql.5.7: drop }
+    - { at: column.index.using, value: btree, postgres.16: keep, mysql.8.0: keep, mysql.5.7: keep }
+    - { at: column.index.using, value: hash, postgres.16: refused, mysql.8.0: refused, mysql.5.7: refused }
+    - { at: table.data, postgres.16: keep, mysql.8.0: keep, mysql.5.7: keep }
+    - { at: table.data_file, postgres.16: keep, mysql.8.0: keep, mysql.5.7: keep }
+mysql:
+  source: mysql.8.0
+  default_type: datetime
+  feature_type: int
+  targets: [postgres.16, sqlite.3]
+  types:
+    - { from: smallint auto_increment, postgres.16: smallserial, sqlite.3: integer }
+    - { from: int auto_increment, postgres.16: serial, sqlite.3: integer }
+    - { from: bigint auto_increment, postgres.16: bigserial, sqlite.3: integer }
+    - { from: tinyint(1), postgres.16: boolean, sqlite.3: integer }
+    - { from: tinyint, postgres.16: smallint, sqlite.3: integer }
+    - { from: smallint, postgres.16: smallint, sqlite.3: integer }
+    - { from: smallint unsigned, postgres.16: integer, sqlite.3: integer }
+    - { from: int, postgres.16: integer, sqlite.3: integer }
+    - { from: int(11), postgres.16: integer, sqlite.3: integer }
+    - { from: int unsigned, postgres.16: bigint, sqlite.3: integer }
+    - { from: bigint, postgres.16: bigint, sqlite.3: integer }
+    - { from: bigint unsigned, postgres.16: numeric(20), sqlite.3: text }
+    - { from: bigint unsigned zerofill, postgres.16: numeric(20), sqlite.3: text }
+    - { from: int(10) unsigned zerofill, postgres.16: bigint, sqlite.3: integer }
+    - { from: float, postgres.16: real, sqlite.3: real }
+    - { from: double, postgres.16: double precision, sqlite.3: real }
+    - { from: double unsigned, postgres.16: double precision, sqlite.3: real }
+    - { from: "decimal(12,2)", postgres.16: "numeric(12,2)", sqlite.3: "numeric(12,2)" }
+    - { from: "decimal(10,2) unsigned", postgres.16: "numeric(10,2)", sqlite.3: "numeric(10,2)" }
+    - { from: "decimal(20,2)", postgres.16: "numeric(20,2)", sqlite.3: text }
+    - { from: decimal(10), postgres.16: numeric(10), sqlite.3: numeric(10) }
+    - { from: decimal, postgres.16: "numeric(10,0)", sqlite.3: numeric }
+    - { from: varchar(80), postgres.16: varchar(80), sqlite.3: text }
+    - { from: char(3), postgres.16: char(3), sqlite.3: text }
+    - { from: longtext, postgres.16: text, sqlite.3: text }
+    - { from: json, postgres.16: jsonb, sqlite.3: text }
+    - { from: longblob, postgres.16: bytea, sqlite.3: blob }
+    - { from: varbinary(16), postgres.16: bytea, sqlite.3: blob }
+    - { from: date, postgres.16: date, sqlite.3: text }
+    - { from: datetime(6), postgres.16: timestamp(6), sqlite.3: text }
+    - { from: datetime, postgres.16: timestamp(0), sqlite.3: text }
+    - { from: timestamp(3), postgres.16: timestamptz(3), sqlite.3: text }
+    - { from: timestamp, postgres.16: timestamptz(0), sqlite.3: text }
+    - { from: time(3), postgres.16: time(3), sqlite.3: text }
+    - { from: time, postgres.16: time(0), sqlite.3: text }
+    - { from: year, postgres.16: smallint, sqlite.3: integer }
+    - { from: bit(1), postgres.16: boolean, sqlite.3: integer }
+    - { from: bit(8), postgres.16: bit(8), sqlite.3: integer }
+    - { from: "enum('a','b')", postgres.16: text, sqlite.3: text }
+    - { from: "set('a','b')", postgres.16: text, sqlite.3: text }
+    - { from: geometry, postgres.16: refused, sqlite.3: refused }
+  defaults:
+    - { from: CURRENT_TIMESTAMP, postgres.16: "now()", sqlite.3: CURRENT_TIMESTAMP }
+    - { from: CURRENT_TIMESTAMP(6), type: datetime(6), postgres.16: "now()", sqlite.3: CURRENT_TIMESTAMP }
+    - { from: CURRENT_TIMESTAMP, type: date, postgres.16: CURRENT_DATE, sqlite.3: CURRENT_DATE }
+    - { from: "(curdate())", type: date, postgres.16: CURRENT_DATE, sqlite.3: CURRENT_DATE }
+    - { from: "(curtime())", type: time, postgres.16: CURRENT_TIME, sqlite.3: CURRENT_TIME }
+    - { from: "(uuid())", type: char(36), postgres.16: "gen_random_uuid()", sqlite.3: refused }
+    - { from: "0", type: tinyint(1), postgres.16: "false", sqlite.3: "0" }
+    - { from: "1", type: tinyint(1), postgres.16: "true", sqlite.3: "1" }
+    - { from: "b'0'", type: bit(1), postgres.16: "false", sqlite.3: "0" }
+    - { from: "b'1'", type: bit(1), postgres.16: "true", sqlite.3: "1" }
+    - { from: "(rand())", type: double, postgres.16: refused, sqlite.3: refused }
+    - { from: "'x'", type: varchar(80), postgres.16: "'x'", sqlite.3: "'x'" }
+  features:
+    - { at: column.index.using, value: btree, postgres.16: keep, sqlite.3: keep }
+    - { at: column.index.using, value: hash, postgres.16: keep, sqlite.3: refused }
+    - { at: column.index.using, value: fulltext, postgres.16: refused, sqlite.3: refused }
+    - { at: table.triggers, postgres.16: drop, sqlite.3: drop }
+    - { at: table.grant, postgres.16: drop, sqlite.3: drop }
+    - { at: table.owner, postgres.16: drop, sqlite.3: drop }
+    - { at: schema.owner, postgres.16: drop, sqlite.3: drop }
+    - { at: column.partition_by, value: RANGE, postgres.16: refused, sqlite.3: refused }
+    - { at: table.data, postgres.16: keep, sqlite.3: keep }
+    - { at: table.data_file, postgres.16: keep, sqlite.3: keep }

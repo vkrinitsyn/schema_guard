@@ -1,0 +1,42 @@
+# [mapping] MySQL's schemas written as SQLite's (src/mapping.rs): the rules as in
+# postgres-mysql.yaml, the types as mysql-postgres.yaml reads them, each to its SQLite affinity.
+from: mysql
+to: sqlite
+default:
+  types:
+    # an integer primary key is SQLite's rowid: it counts by itself
+    - { match: '(?:tinyint|smallint|mediumint|int|integer|bigint)(?:\s*\(\d+\))?(?:\s+unsigned)?(?:\s+zerofill)?\s+auto_increment', to: 'integer' }
+    # [review 2026-11-19] past SQLite's 64-bit integer: kept exact as text
+    - { match: 'bigint(?:\s*\(\d+\))?\s+unsigned(?:\s+zerofill)?', to: 'text', note: 'an unsigned bigint is past SQLite''s integer: kept as text, exact' }
+    - { match: '(?:tinyint|smallint|mediumint|int|integer|bigint)(?:\s*\(\d+\))?(?:\s+unsigned)?(?:\s+zerofill)?|bool|boolean|bit\s*\(\s*\d+\s*\)|year(?:\s*\(4\))?', to: 'integer' }
+    - { match: '(?:float(?:\s*\(\d+(,\d+)?\))?|double(?: precision)?(?:\s*\(\d+,\d+\))?)(?:\s+unsigned)?(?:\s+zerofill)?', to: 'real' }
+    # [review 2026-11-19] SQLite's numeric holds 15 digits, then a REAL: a wider decimal kept exact as text
+    - { match: '(?:decimal|numeric)\s*\(\s*(?:1[6-9]|[2-6]\d)\s*(?:,\s*\d+\s*)?\)(?:\s+unsigned)?(?:\s+zerofill)?', to: 'text', note: 'a decimal of more than 15 digits is past SQLite''s numeric: kept as text, exact' }
+    - { match: '(?:decimal|numeric)\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)(?:\s+unsigned)?(?:\s+zerofill)?', to: 'numeric($1,$2)', note: 'SQLite keeps the value, not its precision and scale' }
+    - { match: '(?:decimal|numeric)\s*\(\s*(\d+)\s*\)(?:\s+unsigned)?(?:\s+zerofill)?', to: 'numeric($1)' }
+    - { match: '(?:decimal|numeric)(?:\s+unsigned)?(?:\s+zerofill)?', to: 'numeric' }
+    - { match: '(?:var)?char\s*\(\s*\d+\s*\)', to: 'text', note: 'SQLite holds no length: a longer value is kept' }
+    - { match: 'tinytext|text|mediumtext|longtext|json', to: 'text' }
+    - { match: "enum\\s*\\(.*\\)|set\\s*\\(.*\\)", to: 'text', note: 'its values are not checked here' }
+    - { match: '(?:tinyblob|blob|mediumblob|longblob)|(?:var)?binary\s*\(\s*\d+\s*\)', to: 'blob' }
+    # dates and times as ISO-8601 text, which SQLite's date functions read
+    - { match: '(?:date|datetime|timestamp|time)(?:\s*\(\s*\d\s*\))?', to: 'text' }
+  defaults:
+    - { match: 'current_timestamp(?:\s*\(\s*\d?\s*\))?|now\(\s*\d?\s*\)', type: 'date', to: 'CURRENT_DATE' }
+    - { match: 'current_timestamp(?:\s*\(\s*\d?\s*\))?|now\(\s*\d?\s*\)|localtimestamp(?:\(\))?', to: 'CURRENT_TIMESTAMP' }
+    - { match: '\(?\s*curdate\(\)\s*\)?|\(?\s*current_date(?:\(\))?\s*\)?', to: 'CURRENT_DATE' }
+    - { match: '\(?\s*curtime\(\)\s*\)?|\(?\s*current_time(?:\(\))?\s*\)?', to: 'CURRENT_TIME' }
+    - { match: "b'0'", to: '0' }
+    - { match: "b'1'", to: '1' }
+    - { match: '\(\s*uuid\(\)\s*\)|uuid\(\)', refuse: 'SQLite has no uuid function to default to' }
+    - { match: '\(.*\)', refuse: "an expression of MySQL's own functions: write it for SQLite by hand" }
+  features:
+    - { at: column.index.using, value: btree, keep: true }
+    - { at: column.index.using, refuse: "an index method: SQLite's are b-trees only" }
+    - { at: table.triggers, drop: true }
+    - { at: table.grant, drop: true }
+    - { at: table.owner, drop: true }
+    - { at: schema.owner, drop: true }
+    - { at: column.partition_by, refuse: 'a partition: SQLite has none' }
+    - { at: table.data, keep: true, note: "its rows as written: MySQL's literals are not converted" }
+    - { at: table.data_file, keep: true, note: "its file's rows as written: MySQL's literals are not converted" }

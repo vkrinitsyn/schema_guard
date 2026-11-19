@@ -1,0 +1,45 @@
+# [mapping] PostgreSQL's schemas written as SQLite's (src/mapping.rs): the rules as in
+# postgres-mysql.yaml. SQLite keeps a type as its affinity (integer, real, text, blob, numeric),
+# so most types map to one of those five; a STRICT table would refuse anything else.
+from: postgres
+to: sqlite
+default:
+  types:
+    # an integer primary key is SQLite's rowid: it counts by itself
+    - { match: 'smallserial|serial|bigserial|serial2|serial4|serial8', to: 'integer' }
+    - { match: 'smallint|integer|int|bigint|int2|int4|int8', to: 'integer' }
+    - { match: 'boolean|bool', to: 'integer' }
+    - { match: 'real|float4|double precision|float8', to: 'real' }
+    - { match: '(?:numeric|decimal)\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)', to: 'numeric($1,$2)', note: 'SQLite keeps the value, not its precision and scale' }
+    - { match: '(?:numeric|decimal)\s*\(\s*(\d+)\s*\)', to: 'numeric($1)' }
+    - { match: 'numeric|decimal|money', to: 'numeric' }
+    - { match: '(?:varchar|character varying|char|character|bpchar)\s*\(\s*\d+\s*\)', to: 'text', note: 'SQLite holds no length: a longer value is kept' }
+    - { match: 'varchar|character varying|char|character|bpchar|text|citext', to: 'text' }
+    - { match: 'bytea', to: 'blob' }
+    # dates and times as ISO-8601 text, which SQLite's date functions read
+    - { match: '(?:timestamptz|timestamp with time zone|timestamp without time zone|timestamp|date|time without time zone|time|timetz|time with time zone)\s*(\(\s*\d\s*\))?', to: 'text' }
+    - { match: 'interval', to: 'text' }
+    - { match: 'uuid|inet|cidr', to: 'text' }
+    - { match: 'jsonb|json', to: 'text' }
+    - { match: '.*\[\]', refuse: 'an array: SQLite has no array type' }
+  defaults:
+    - { match: 'now\(\)|current_timestamp|localtimestamp|transaction_timestamp\(\)|current_date', type: 'date', to: 'CURRENT_DATE' }
+    - { match: 'now\(\)|current_timestamp|localtimestamp|transaction_timestamp\(\)', to: 'CURRENT_TIMESTAMP' }
+    - { match: 'current_date', to: 'CURRENT_DATE' }
+    - { match: "'((?:[^']|'')*)'::[a-z_ ]+(\\(\\d+(,\\d+)?\\))?", to: "'$1'" }
+    - { match: 'nextval\(.*\)', refuse: "a sequence's default: SQLite counts with an integer primary key only" }
+    - { match: 'gen_random_uuid\(\)|uuid_generate_v4\(\)', refuse: 'SQLite has no uuid function to default to' }
+  features:
+    - { at: column.index.using, value: btree, keep: true }
+    - { at: column.index.using, refuse: "an index method: SQLite's are b-trees only" }
+    - { at: column.index.concurrently, drop: true }
+    - { at: column.index.nulls, drop: true }
+    - { at: column.index.collate, drop: true }
+    - { at: column.partition_by, refuse: 'a partition: SQLite has none' }
+    - { at: table.triggers, drop: true }
+    # no users in SQLite: no grants, no owners
+    - { at: table.grant, drop: true }
+    - { at: table.owner, drop: true }
+    - { at: schema.owner, drop: true }
+    - { at: table.data, keep: true, note: "its rows as written: PostgreSQL's literals are not converted" }
+    - { at: table.data_file, keep: true, note: "its file's rows as written: PostgreSQL's literals are not converted" }

@@ -279,6 +279,7 @@ impl Table {
     }
 
 
+    #[cfg(feature = "postgres")]
     /// build a create or alter sql - deploy_pg, a statement Postgres refused said as a message
     pub async fn deploy(
         &self,
@@ -292,6 +293,7 @@ impl Table {
         self.deploy_pg(dbc, db, schema, file, dry_run, opt).await.map_err(|e| e.to_string())
     }
 
+    #[cfg(feature = "postgres")]
     /// build a create or alter sql, and run it: a statement Postgres refuses is returned
     /// as its native error (error.rs). A dry run hands its receiver the SQL alone
     pub async fn deploy_pg(
@@ -307,6 +309,7 @@ impl Table {
         self.deploy_plan_pg(dbc, db, schema, file, plan.as_ref().map(|p| p as &DryRun<'_>), opt).await
     }
 
+    #[cfg(feature = "postgres")]
     /// [dry-run] deploy_pg, a dry run handing its callback the table's schema.table and
     /// the changes to make there, beside the SQL
     #[allow(unused_mut)]
@@ -812,6 +815,7 @@ impl Table {
         }
     }
 
+    #[cfg(feature = "postgres")]
     /// a statement Postgres refused, as it refused it
     fn refused(step: DeployStep, sql: String, err: tokio_postgres::Error, file: &str) -> DeployError {
         DeployError::Pg { step, sql, file: file.to_string(), err }
@@ -874,6 +878,7 @@ impl Table {
         }
     }
 
+    #[cfg(feature = "postgres")]
     /// build the foreign keys - deploy_fk_pg, a statement Postgres refused said as a message
     pub async fn deploy_fk(
         &self,
@@ -888,6 +893,7 @@ impl Table {
         self.deploy_fk_pg(schemas, dbc, db, schema, is_retry, file, dry_run).await.map_err(|e| e.to_string())
     }
 
+    #[cfg(feature = "postgres")]
     /// build the foreign keys, and run them: a statement Postgres refuses is returned
     /// as its native error (error.rs). A dry run hands its receiver the SQL alone
     pub async fn deploy_fk_pg(
@@ -904,6 +910,7 @@ impl Table {
         self.deploy_fk_plan_pg(schemas, dbc, db, schema, is_retry, file, plan.as_ref().map(|p| p as &DryRun<'_>)).await
     }
 
+    #[cfg(feature = "postgres")]
     /// [dry-run] deploy_fk_pg, a dry run handing its callback the table's schema.table
     /// and its foreign keys to add, beside the SQL
     #[allow(unused, unused_mut)]
@@ -1186,7 +1193,7 @@ fn serial_to_base_type(col_type: &str) -> Option<&'static str> {
 
 /// Type of column type change
 #[derive(Debug, PartialEq)]
-enum TypeChange {
+pub(crate) enum TypeChange {
     /// No change needed
     NoChange,
     /// Size extension (safe) - e.g., varchar(50) -> varchar(100)
@@ -1228,9 +1235,14 @@ fn parse_type_size(type_str: &str) -> (String, Option<i32>, Option<i32>) {
 }
 
 /// Analyze the type change between existing and desired column types
-fn analyze_type_change(existing: &str, desired: &str) -> TypeChange {
-    let (existing_base, existing_size, existing_scale) = parse_type_size(existing);
-    let (desired_base, desired_size, desired_scale) = parse_type_size(desired);
+pub(crate) fn analyze_type_change(existing: &str, desired: &str) -> TypeChange {
+    let (existing_base, mut existing_size, existing_scale) = parse_type_size(existing);
+    let (desired_base, mut desired_size, desired_scale) = parse_type_size(desired);
+    // [mapping] a char with no length is a char(1), in PostgreSQL as in the standard: the loader
+    // writes bpchar(1) for it (owner, 2026-11-18), which is no change from a schema's bare char
+    let is_char = |t: &str| matches!(t, "char" | "character" | "bpchar");
+    if is_char(&existing_base) && existing_size.is_none() { existing_size = Some(1); }
+    if is_char(&desired_base) && desired_size.is_none() { desired_size = Some(1); }
 
     // Normalize base types (int4 == integer == int == serial, etc.)
     // serial/bigserial/smallserial are pseudo-types that create int4/int8/int2 with sequences
@@ -1419,3 +1431,23 @@ mod comment_tests {
     }
 }
 
+
+/// [mapping] char(n) as the loader writes it now, bpchar(n), and a schema's char or char(n): the
+/// same length is no change, a bare char is char(1) (owner, 2026-11-18)
+#[cfg(test)]
+mod char_length_tests {
+    use super::{analyze_type_change, TypeChange};
+
+    #[test]
+    fn a_char_of_its_length_is_no_change() {
+        assert!(matches!(analyze_type_change("bpchar(10)", "char(10)"), TypeChange::NoChange));
+        assert!(matches!(analyze_type_change("bpchar(1)", "char"), TypeChange::NoChange));
+        assert!(matches!(analyze_type_change("bpchar(1)", "character"), TypeChange::NoChange));
+        assert!(matches!(analyze_type_change("bpchar", "char(1)"), TypeChange::NoChange));
+        assert!(matches!(analyze_type_change("bpchar(10)", "char(12)"), TypeChange::SizeExtension));
+        assert!(matches!(analyze_type_change("bpchar(10)", "char(4)"), TypeChange::SizeReduction));
+        // varchar as before
+        assert!(matches!(analyze_type_change("varchar(10)", "varchar(10)"), TypeChange::NoChange));
+        assert!(matches!(analyze_type_change("varchar(10)", "varchar(20)"), TypeChange::SizeExtension));
+    }
+}

@@ -1,0 +1,86 @@
+# [mapping] PostgreSQL's schemas written as MySQL's (src/mapping.rs). The default rules hold for
+# every version of both; of a side's version cases (versions, for: mysql.5) the newest one at or
+# below its version goes before them - a newer server takes an older one's case. Types and defaults: a regex matched
+# whole and case-insensitive, written as `to` ($1 is the first group), kept or refused - the
+# first rule that matches decides, and what none matches is refused. Features: kept, dropped
+# (said) or refused. Custom SQL is left out on a cross-vendor apply by schema_guard itself.
+from: postgres
+to: mysql
+default:
+  types:
+    # a key from a sequence, as a snapshot writes it
+    - { match: 'smallserial|serial2', to: 'smallint auto_increment' }
+    - { match: 'serial|serial4', to: 'int auto_increment' }
+    - { match: 'bigserial|serial8', to: 'bigint auto_increment' }
+    - { match: 'smallint|int2', to: 'smallint' }
+    - { match: 'integer|int|int4', to: 'int' }
+    - { match: 'bigint|int8', to: 'bigint' }
+    - { match: 'boolean|bool', to: 'tinyint(1)' }
+    - { match: 'real|float4', to: 'float' }
+    - { match: 'double precision|float8', to: 'double' }
+    - { match: '(?:numeric|decimal)\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)', to: 'decimal($1,$2)' }
+    - { match: '(?:numeric|decimal)\s*\(\s*(\d+)\s*\)', to: 'decimal($1)' }
+    - { match: 'numeric|decimal', refuse: 'a numeric with no precision: MySQL keeps decimal(10,0) - give its precision and scale' }
+    - { match: 'money', to: 'decimal(19,2)' }
+    - { match: '(?:varchar|character varying)\s*\(\s*(\d+)\s*\)', to: 'varchar($1)' }
+    - { match: 'varchar|character varying', refuse: 'a varchar with no length: MySQL needs one' }
+    - { match: '(?:char|character|bpchar)\s*\(\s*(\d+)\s*\)', to: 'char($1)' }
+    # a snapshot writes char(n) as bpchar, its length not in it [review 2026-11-18]
+    - { match: 'bpchar', refuse: 'a char of a length the snapshot left out: write it char(n)' }
+    - { match: 'char|character', to: 'char(1)' }
+    # PostgreSQL's text has no length; MySQL's text ends at 64 KiB
+    - { match: 'text|citext', to: 'longtext' }
+    - { match: 'bytea', to: 'longblob' }
+    - { match: 'date', to: 'date' }
+    # no time zone kept in MySQL: the value as stored, in UTC
+    - { match: '(?:timestamptz|timestamp with time zone|timestamp without time zone|timestamp)\s*\(\s*(\d)\s*\)', to: 'datetime($1)' }
+    - { match: 'timestamptz|timestamp with time zone|timestamp without time zone|timestamp', to: 'datetime(6)' }
+    - { match: '(?:time without time zone|time)\s*\(\s*(\d)\s*\)', to: 'time($1)' }
+    - { match: 'time without time zone|time', to: 'time(6)' }
+    - { match: 'timetz|time with time zone', refuse: 'a time with its zone: MySQL has none' }
+    - { match: 'interval', refuse: 'an interval: MySQL has no such type' }
+    - { match: 'uuid', to: 'char(36)' }
+    - { match: 'jsonb|json', to: 'json' }
+    - { match: 'inet|cidr', to: 'varchar(43)' }
+    - { match: '.*\[\]', refuse: 'an array: MySQL has no array type' }
+  defaults:
+    # a date column takes the date [review 2026-11-18]
+    - { match: 'now\(\)|current_timestamp|localtimestamp|transaction_timestamp\(\)|current_date', type: 'date', to: '(CURRENT_DATE)' }
+    - { match: 'now\(\)|current_timestamp|localtimestamp|transaction_timestamp\(\)', to: 'CURRENT_TIMESTAMP(6)' }
+    - { match: 'current_date', to: '(CURRENT_DATE)' }
+    - { match: 'gen_random_uuid\(\)|uuid_generate_v4\(\)', to: '(uuid())' }
+    # one quoted string and its cast, '' inside it a quote [review 2026-11-18]
+    - { match: "'((?:[^']|'')*)'::[a-z_ ]+(\\(\\d+(,\\d+)?\\))?", to: "'$1'" }
+    - { match: 'nextval\(.*\)', refuse: "a sequence's default: MySQL counts with auto_increment, on a key column only" }
+  features:
+    - { at: column.index.using, value: gin, refuse: 'a GIN index: MySQL has none' }
+    - { at: column.index.using, value: gist, refuse: 'a GiST index: MySQL has none' }
+    - { at: column.index.using, value: brin, refuse: 'a BRIN index: MySQL has none' }
+    - { at: column.index.using, value: btree, keep: true }
+    # InnoDB builds a b-tree for USING HASH: said by leaving it out [review 2026-11-18]
+    - { at: column.index.using, value: hash, drop: true }
+    - { at: column.index.using, refuse: "an index method MySQL has not" }
+    - { at: column.index.concurrently, drop: true }
+    - { at: column.index.nulls, drop: true }
+    - { at: column.index.collate, drop: true }
+    - { at: column.partition_by, refuse: "a partition: MySQL's are declared on the table, apart" }
+    # their functions are PostgreSQL's own
+    - { at: table.triggers, drop: true }
+    - { at: table.grant, drop: true }
+    - { at: table.owner, drop: true }
+    - { at: schema.owner, drop: true }
+    # rows as written: PostgreSQL's literals (t and f, '{...}' arrays) are not converted
+    - { at: table.data, keep: true, note: "its rows as written: PostgreSQL's literals are not converted" }
+    - { at: table.data_file, keep: true, note: "its file's rows as written: PostgreSQL's literals are not converted" }
+versions:
+  # json from 5.7.8, a default of an expression from 8.0.13: before 8, neither is taken as given
+  - for: mysql.5
+    types:
+      - { match: 'jsonb|json', refuse: 'json needs MySQL 5.7.8 at least: map it by hand to longtext' }
+    defaults:
+      - { match: 'current_date|gen_random_uuid\(\)|uuid_generate_v4\(\)', refuse: 'an expression as a default needs MySQL 8.0.13' }
+      # the date of now() is an expression too (the matrix's row, 2026-11-18)
+      - { match: 'now\(\)|current_timestamp|localtimestamp|transaction_timestamp\(\)', type: 'date', refuse: 'a date column defaulting to the date is an expression, which needs MySQL 8.0.13' }
+  # from 8 on the default rules hold: the newest case at or below a version is its, so 8 has one
+  # of its own, with nothing in it - else mysql.5's would reach 8 and every newer one
+  - for: mysql.8

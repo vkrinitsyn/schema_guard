@@ -1,7 +1,7 @@
 # agent.md - schema_guard_tokio
 
 A guide for coding agents (and people) who use this crate or change it. Each
-statement below was checked against the source in `src/` for version 1.10.2.
+statement below was checked against the source in `src/` for version 2.4.0.
 
 ## What it is
 
@@ -24,6 +24,20 @@ not the complete state of the database:
 
 So one YAML file can be applied to an empty database, to an old one, or twice
 in a row, and each time it produces only what is missing.
+
+## Features: a database each (since 2.4.0)
+
+| feature | what it brings |
+|---|---|
+| `postgres` (default) | tokio-postgres: `migrate*`, `migrate_plan`, `loader::load_info_*`, `pg_error*`, `set_lc_messages`, `superset_bundle_db`, the `_pg` deploys |
+| `mysql` | sqlx's MySQL driver (pure Rust, tokio), async: `mysql::{migrate, plan, plan_on, load_info_schema}` on a `MySqlConnection` |
+| `sqlite` | turso, the embedded SQLite yt-lite uses (no system library), async: `sqlite::{migrate, plan, load_info_schema}` on a `turso::Connection` |
+| `slog` | executed SQL logged at debug |
+
+With no feature the crate still parses, validates and maps YAML (`parse_yaml_schema`,
+`mapping`) and builds the model; nothing connects. A user of the defaults gets what 2.x
+gave. With `default-features = false`, name `postgres` to keep it. One binary per database
+is the plan (sge-sqlite and the like), each with its feature only.
 
 ## Using it
 
@@ -55,6 +69,90 @@ the crate generate the DDL.
 
 `migrate1` / `migrate_opt` connect without TLS. For TLS, or to apply several
 files atomically, open the transaction yourself and call `migrate`.
+
+### SQLite (`src/sqlite.rs`, feature `sqlite`)
+
+Through turso (`=0.9.0-pre.5`), the embedded SQLite yt-lite uses (owner, 2026-11-19): async, on a
+`turso::Connection`; a connection that attaches databases is built with `experimental_attach(true)`.
+An index, trigger or view made again in an attached database is qualified with it.
+
+| function | what |
+|---|---|
+| `sqlite::plan(yaml, &Connection, file_name, &opt).await -> SqlitePlan` | the statements, nothing run: `statements`, `rebuilt` (tables rebuilt, and why), `skipped` (left out, and why) |
+| `sqlite::migrate(yaml, &Connection, plan_only, file_name, &opt).await` | planned, then run in **one transaction** of its own (refused when the connection already is in one); foreign keys off around a rebuild and checked by hand before the commit (turso has no `foreign_key_check`) |
+| `sqlite::load_info_schema(&Connection).await` | the catalog (`sqlite_schema`, `PRAGMA table_xinfo` / `index_list` / `foreign_key_list`) into the same `InfoSchemaType` as PostgreSQL's loader: a schema per database of the connection |
+
+- A schema is a database of the connection: `main` (also for `public`), or one the caller
+  `ATTACH`ed under that name; any other name is refused.
+- What SQLite's `ALTER TABLE` cannot do (a type, NOT NULL, default, key or FK changed; a
+  column that is a key, unique, of its own `sql`, NOT NULL without a constant default) is
+  SQLite's own table rebuild: the new table under `_sg_new_<t>`, rows copied, the old one
+  dropped, renamed - its views dropped before and made again after - indexes and
+  triggers made again. Kept from the old `CREATE TABLE`: a column the YAML does not name,
+  whole; a named one's UNIQUE, CHECK, COLLATE, AUTOINCREMENT; the table's constraints and
+  options (`STRICT`, `WITHOUT ROWID`); AUTOINCREMENT's counter.
+- As on PostgreSQL: nothing dropped, a narrower or incompatible type needs `with_size_cut`,
+  a changed index `with_index_drop`, failfast unless `without_failfast`.
+- Not in SQLite: partitions (refused), PostgreSQL's function triggers (refused unless
+  `exclude_triggers`), owners and grants (left out, in `skipped`).
+
+### MySQL (`src/mysql.rs`, feature `mysql`)
+
+| function | what |
+|---|---|
+| `mysql::plan(yaml, &mut MySqlConnection, file_name, &opt).await -> MysqlPlan` | the statements, nothing run: `statements`, `skipped` |
+| `mysql::plan_on(&[(database, &Schema)], &existing, &opt)` | the same from a model of what MySQL has, no connection: what the unit tests drive |
+| `mysql::migrate(yaml, &mut MySqlConnection, plan_only, file_name, &opt).await` | planned in full, then run statement by statement |
+| `mysql::load_info_schema(&mut MySqlConnection, &[databases]).await` | information_schema (TABLES, COLUMNS, STATISTICS, KEY_COLUMN_USAGE, TRIGGERS) into `InfoSchemaType`: a schema per database; none named, every one but MySQL's own |
+
+- A schema is a MySQL database, made when not there; `public` is the connection's current one.
+- In place, by `ALTER TABLE`: ADD COLUMN, MODIFY COLUMN (type, nullability, default,
+  auto_increment), ADD / DROP PRIMARY KEY, indexes; foreign keys added after every table.
+  Compared as MySQL keeps them: an integer's display width dropped, its synonyms (`bool`,
+  `integer`, `decimal`) by MySQL's names, a literal default bare, `CURRENT_DATE` as `curdate()`.
+- **DDL is not transactional in MySQL:** every refusal is found while planning, before any
+  statement runs; one that fails then stops the run and says how many ran before it.
+- Not in MySQL: PostgreSQL's function triggers (refused unless `exclude_triggers`), partitions
+  (refused), grants and owners (left out, in `skipped`).
+- `tests/mysql_samples.rs`: every sample planned for MySQL with no server; deployed to a live one,
+  read back and applied again with nothing to do when asked for -
+  `SG_MYSQL_URL=mysql://user:pw@host/db cargo test --features mysql --test mysql_samples -- --ignored`
+  (2026-11-19: passed on a throwaway `mysql:8.0` container, with an in-place change test).
+
+### Source and mapping (`src/mapping.rs`, `src/mappings/`)
+
+**The rule** (owner, 2026-11-19): a schema is converted on apply, for its target
+only - a PostgreSQL dump applied to PostgreSQL is applied as it is, nothing mapped. A schema
+written by hand, with no `source`, is PostgreSQL's. Custom SQL is ignored on a mapping to
+another vendor.
+
+
+A schema's top-level `source: vendor.version` (e.g. `postgres.16`) says what wrote it; sge
+writes it on a snapshot. A mapping turns a schema of one vendor into another's, declared in
+YAML: a default set of rules plus version cases, the nearest case at or below the target's
+version applying (`mysql.5` covers 5.7; an empty `mysql.8` stops it at 8).
+
+| item | what |
+|---|---|
+| `mapping::Source::parse("mysql.8.0")`, `Source::of(&yaml)` | a side: vendor and version |
+| `Mapping::builtin(from, to)` | the built-in files `src/mappings/<from>-<to>.yaml`, each way between `postgres`, `mysql` and `sqlite` |
+| `Mapping::parse(text)` | one of your own |
+| `mapping.apply(&yaml, &target) -> Result<Mapped{schema, notes}, Vec<String>>` | the schema rewritten, with a note for each thing dropped or changed; `Err` lists every refusal at once |
+
+- Value rules (types, defaults: a regex with captures, `to` / `keep` / `refuse`, an
+  optional `note`, for a default an optional column `type` filter) and feature rules at
+  fixed places (index method, concurrently, nulls, collate, partition, triggers, grants,
+  owners, data: `keep` / `drop` / `refuse`).
+- Custom SQL of the schema (`sql`, `constraint`) is the source vendor's: removed and noted on
+  a cross-vendor apply. Its keywords `UNIQUE`, `NOT NULL`, `NULL`, `PRIMARY KEY` in a
+  column's `sql` become schema fields first (`index.unique` named `<table>_<column>_key`,
+  `constraint.nullable`, `constraint.primaryKey`).
+- **The matrix** (`src/mappings/matrix.yaml`): a section per source vendor, in it a row per
+  type, default or feature of that vendor's, a column per target (e.g. `postgres.16`,
+  `mysql.8.0`, `mysql.5.7`, `sqlite.3`). Two quick tests read
+  it: every cell holds, and every rule of every mapping is reached by a row - a rule added
+  with no row fails. Add a row with every rule.
+- Nothing calls `apply` on a deploy yet: the per-database binaries will.
 
 ### Errors and language (`src/error.rs`, `src/i18n.rs`)
 
@@ -219,12 +317,25 @@ database:
 | `src/grant.rs` | desired vs existing privileges, `GRANT` / `REVOKE` |
 | `src/loader.rs` | `information_schema` / `pg_catalog` introspection into `PgTable` |
 | `src/utils.rs` | `OrderedHashMap`, YAML accessors, `as_esc`, `safe_sql_name` |
+| `src/mapping.rs`, `src/mappings/*.yaml` | the source field, the declarative mappings, the matrix |
+| `src/sqlite.rs` | SQLite's catalog read and deploy (feature `sqlite`) |
+| `src/mysql.rs`, `src/mysql_test.rs` | MySQL's catalog read and deploy (feature `mysql`) |
 
 ```sh
 cargo build                # 0 warnings expected
 cargo build --release
-cargo test                 # offline: parses tests/example.yaml, no database needed
+cargo test --lib                                     # PostgreSQL's default: no database needed
+cargo test --lib --features sqlite                   # SQLite too, on in-memory databases
+cargo test --lib --no-default-features --features sqlite
+cargo check --no-default-features                    # the model alone
 ```
+
+`cargo test --features sqlite --test sqlite_samples`: every sample of `tests/*.yaml` (PostgreSQL's)
+mapped to SQLite, deployed to the built-in one, read back, applied again with nothing to do, written
+to; and the same samples left as they are for PostgreSQL. A new sample there is taken up by itself.
+
+Every feature combination is to build and pass: a change gated wrong shows in one of them
+only. The tests under `tests/` that need PostgreSQL carry `required-features = ["postgres"]`.
 
 - **The unit tests need no database, and nothing here tests against one.** To
   see what a change generates, run `migrate` with a `dry_run` closure against a
@@ -241,11 +352,14 @@ cargo test                 # offline: parses tests/example.yaml, no database nee
   pointing at a local copy, so say in the change which version carries it.
   Publishing to crates.io is the maintainer's step.
 
-## State on 2026-10-09
+## State on 2026-11-19
 
-- Version 1.10.2, branch `features/tokio`. `cargo build` (debug and release):
-  0 warnings. `cargo test`: 5/5 pass.
-- Uncommitted in `src/table.rs`: the primary-key guard
-  `!desired_pk.is_empty() && desired_pk != existing_pk`. Without it, a partial
-  table definition (one new column, no PK listed) read as "remove the primary
-  key". With it, a PK is changed only when the YAML declares a different one.
+- Version 2.4.0, uncommitted, not published (crates.io has 2.3.1): the database features,
+  `source` and the mappings with their matrix, SQLite. 2.4, not 3: `postgres` is a default,
+  so a user of the defaults gets what 2.x gave (owner, 2026-11-19).
+- `cargo test --lib`: 183 pass by default, 200 with `sqlite`, 198 with `sqlite` alone; SQLite through
+  turso (rusqlite before, 2026-11-19).
+- Mappings each way between PostgreSQL, MySQL and SQLite; a literal default goes through the rules
+  (a boolean's 0 and 1 to false and true).
+- Fixed in it: `bpchar(n)` read with its length; a `char` with no length compared as one.
+- Publish order: schema_guard_tokio 2.4.0, then sge 2.4.0 (it depends on `^2.4.0`).

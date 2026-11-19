@@ -18,6 +18,37 @@
 > All provided for free by [DBinvent.com](https://dbinvent.com) the YT Cluster - 
 > The Infinite Scale Postgres cluster solution.
 
+### Features: a database each
+
+One feature a database, PostgreSQL's by default (`default = ["postgres"]`): its driver, its catalog
+read into the schema's model and the changes deployed to it. Each database's tool is a binary of
+its own, built with its feature (sge is PostgreSQL's). Without one, the model alone: a YAML schema
+read, checked and compared with a loaded one - no database read or changed. Since 2.4.0: a crate
+that leaves the default features out names `postgres` to keep what 2.x gave it.
+
+```toml
+schema_guard_tokio = "2.4"                                                      # PostgreSQL
+schema_guard_tokio = { version = "2.4", default-features = false, features = ["postgres", "slog"] }
+schema_guard_tokio = { version = "2.4", default-features = false, features = ["sqlite"] }    # SQLite
+schema_guard_tokio = { version = "2.4", default-features = false, features = ["mysql"] }     # MySQL
+```
+
+Another vendor's schema is converted on apply, for its target only: a PostgreSQL dump applied to
+PostgreSQL is applied as it is; a schema with no `source` is PostgreSQL's; custom SQL is ignored on
+a mapping to another vendor (`yaml.md`).
+
+`mysql` (through sqlx's MySQL driver, pure Rust; async): `schema_guard_tokio::mysql::migrate` deploys a YAML
+schema to a `MySqlConnection`, `plan` says what it would run, `load_info_schema` reads the catalog. A
+schema is a MySQL database (`public` the connection's current one); changes are made in place by
+`ALTER TABLE`. MySQL commits each DDL by itself: everything is planned before the first statement
+runs, and a statement that fails says how many ran before it.
+
+`sqlite` (SQLite embedded, through turso as yt-lite uses it; async): `schema_guard_tokio::sqlite::migrate` deploys a YAML
+schema to a connection, `plan` says what it would run, `load_info_schema` reads the catalog into the
+model. A schema is `main` (as `public` is read too) or a database attached by that name. What SQLite's
+ALTER TABLE cannot do is done by its own table rebuild, in one transaction, foreign keys checked;
+nothing is dropped, and a narrower type needs `with_size_cut`, as on PostgreSQL.
+
 ### Merging YAML defined schema and data into PostgreSQL database
 
 Create a [YAML](yaml.md) file:

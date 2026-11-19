@@ -8,6 +8,7 @@
 //! schema_guard's way, through pg_error: tokio_postgres's own Display prints "db
 //! error" for every error of the server's, and leaves out what caused one of its own.
 
+#[cfg(feature = "postgres")]
 use std::fmt::Write;
 
 /// The part of a deploy a statement was for
@@ -42,6 +43,7 @@ impl DeployStep {
 pub enum DeployError {
     /// a statement Postgres refused: its native error, the statement, the file it came
     /// from (empty for none) and the step it was for
+    #[cfg(feature = "postgres")]
     Pg { step: DeployStep, sql: String, file: String, err: tokio_postgres::Error },
     /// one of schema_guard's own, a message in the messages' language (i18n.rs)
     Message(String),
@@ -56,6 +58,7 @@ impl From<String> for DeployError {
 impl std::fmt::Display for DeployError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            #[cfg(feature = "postgres")]
             DeployError::Pg { step, sql, file, err } => {
                 let source = if file.is_empty() { String::new() } else { tr!("table.source", file = file) };
                 f.write_str(&tr!(step.key(), sql = sql, source = source, err = pg_error_in(err, sql)))
@@ -70,12 +73,14 @@ impl std::error::Error for DeployError {
     /// walking the chain (anyhow, eyre)
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            #[cfg(feature = "postgres")]
             DeployError::Pg { err, .. } => Some(err),
             DeployError::Message(_) => None,
         }
     }
 }
 
+#[cfg(feature = "postgres")]
 /// A Postgres error in full, which tokio_postgres's Display is not: one of the server's
 /// with its severity, SQLSTATE and message - in the server's language, its lc_messages -
 /// its DETAIL, HINT and WHERE, and the character it points at; one of the client's with
@@ -85,6 +90,7 @@ pub fn pg_error(e: &tokio_postgres::Error) -> String {
     pg_error_in(e, "")
 }
 
+#[cfg(feature = "postgres")]
 /// [pg_error], with the line of `sql` - the statement the error is of - the server points
 /// at, as psql says it: `LINE 2: ...` and a `^` under the character. Without the
 /// statement (empty) the position is said as a number.
@@ -150,6 +156,7 @@ fn line_at(sql: &str, p: u32) -> Option<(usize, &str, usize)> {
     Some((line, text, sql[start..at].chars().count() + 1))
 }
 
+#[cfg(feature = "postgres")]
 /// [i18n] Ask the server for its messages - errors, notices - in `lang` (`en`, `ru`,
 /// ...), through lc_messages: LANG's own locale when it is of that language, else the
 /// language's usual one (ru_RU.UTF-8). Only when the role may set it - a superuser, or
@@ -211,6 +218,7 @@ mod tests {
     }
 
     /// [pg] a client error says what caused it - tokio_postgres's Display alone does not
+    #[cfg(feature = "postgres")]
     #[test]
     fn a_client_error_says_its_cause() {
         let e = "host=/nonexistent port=1 user=x".parse::<tokio_postgres::Config>().unwrap();
@@ -229,6 +237,7 @@ mod tests {
     }
 
     /// [pg] a refused statement's error carries Postgres's as its source, for a chain
+    #[cfg(feature = "postgres")]
     #[test]
     fn a_refused_statement_has_its_error_as_source() {
         let c = "host=/nonexistent port=1 user=x".parse::<tokio_postgres::Config>().unwrap();

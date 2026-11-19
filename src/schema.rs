@@ -83,6 +83,7 @@ impl Schema {
         Ok(())
     }
 
+    #[cfg(feature = "postgres")]
     #[inline]
     /// return statements to execute
     /// deploy_all_tables_pg, a statement Postgres refused said as a message
@@ -93,6 +94,7 @@ impl Schema {
         self.deploy_all_tables_pg(schema, db, dry_run, opt).await.map_err(|e| e.to_string())
     }
 
+    #[cfg(feature = "postgres")]
     /// deploy every table but the templates: a statement Postgres refuses is returned as
     /// its native error (error.rs). A dry run hands its receiver the SQL alone
     pub async fn deploy_all_tables_pg(&self, schema: &mut InfoSchemaType,
@@ -103,6 +105,7 @@ impl Schema {
         self.deploy_all_tables_plan_pg(schema, db, plan.as_ref().map(|p| p as &crate::changes::DryRun<'_>), opt).await
     }
 
+    #[cfg(feature = "postgres")]
     /// [dry-run] deploy_all_tables_pg, a dry run handing its callback each table's
     /// schema.table and the changes to make there, beside the SQL
     pub async fn deploy_all_tables_plan_pg(&self, schema: &mut InfoSchemaType,
@@ -122,6 +125,7 @@ impl Schema {
         Ok(cnt)
     }
 
+    #[cfg(feature = "postgres")]
     #[inline]
     /// return statements to execute
     /// deploy_all_fk_pg, a statement Postgres refused said as a message
@@ -133,6 +137,7 @@ impl Schema {
         self.deploy_all_fk_pg(schemas, schema, db, retry, dry_run).await.map_err(|e| e.to_string())
     }
 
+    #[cfg(feature = "postgres")]
     /// deploy every table's foreign keys but the templates': a statement Postgres refuses
     /// is returned as its native error (error.rs). A dry run hands its receiver the SQL
     /// alone
@@ -145,6 +150,7 @@ impl Schema {
         self.deploy_all_fk_plan_pg(schemas, schema, db, retry, plan.as_ref().map(|p| p as &crate::changes::DryRun<'_>)).await
     }
 
+    #[cfg(feature = "postgres")]
     /// [dry-run] deploy_all_fk_pg, a dry run handing its callback each table's
     /// schema.table and its foreign keys to add, beside the SQL
     pub async fn deploy_all_fk_plan_pg(&self, schemas: &OrderedHashMap<Schema>,

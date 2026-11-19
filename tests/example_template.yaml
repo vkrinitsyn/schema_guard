@@ -13,6 +13,14 @@ database:
           grant:
             - all: app_user
 
+      # A second template, for a table to take two (2026-11-19: orders named it, none defined it -
+      # the sample did not parse)
+      - table:
+          tableName: audit_template
+          template: true
+          columns:
+            - column: { name: changed_by, type: varchar(80) }
+
       # Use the template
       - table:
           tableName: users
@@ -26,4 +34,4 @@ database:
           tableName: orders
           template: [public.base_table, audit_template]
           columns:
-            - column: { name: total, type: numeric(10,2) }
+            - column: { name: total, type: "numeric(10,2)" }

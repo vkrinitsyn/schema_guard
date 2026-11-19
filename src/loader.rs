@@ -1,6 +1,7 @@
 // extern crate postgres;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+#[cfg(feature = "postgres")]
 use std::result::Result;
 
 // use postgres::Transaction;
@@ -196,6 +197,7 @@ impl PgColumnDfn {
 }
 
 
+#[cfg(feature = "postgres")]
 pub async fn load_info_schema(db_name: &str, db: &mut tokio_postgres::Transaction<'_>) -> Result<InfoSchemaType, String> {
     let mut data = load_info_cc(db_name, db).await?;
     let _ = load_info_pk(db_name, db, &mut data).await?;
@@ -208,6 +210,7 @@ pub async fn load_info_schema(db_name: &str, db: &mut tokio_postgres::Transactio
 
 
 // SELECT table_catalog, table_schema, table_name, column_name, column_default, is_nullable, data_type, udt_name, character_maximum_length, numeric_precision, numeric_scale, ordinal_position from information_schema.columns where table_schema not in ('pg_catalog', 'information_schema') and table_name = table_catalog = $1
+#[cfg(feature = "postgres")]
 #[inline]
 async fn load_info_cc(db_name: &str, db: &mut tokio_postgres::Transaction<'_>) -> Result<InfoSchemaType, String> {
     let mut data: InfoSchemaType = Default::default();
@@ -246,9 +249,12 @@ async fn load_info_cc(db_name: &str, db: &mut tokio_postgres::Transaction<'_>) -
         if is_array {
             data_type = data_type[1..].to_string();
         }
-        if data_type.to_lowercase().as_str() == "varchar" {
+        // [mapping] char(n) - bpchar - with its length too, as varchar (owner, 2026-11-18): without
+        // it a cross-vendor mapping cannot tell char(1) from char(80), and a schema's char(n)
+        // compared with a bare bpchar as a size change on every deploy
+        if matches!(data_type.to_lowercase().as_str(), "varchar" | "bpchar") {
             // For array columns information_schema reports character_maximum_length as NULL;
-            // fall back to atttypmod (PostgreSQL stores length+4 there for varchar).
+            // fall back to atttypmod (PostgreSQL stores length+4 there for varchar and bpchar).
             let varchar_len = character_maximum_length
                 .or_else(|| if is_array && atttypmod > 4 { Some(atttypmod - 4) } else { None });
             if let Some(varchar_len) = varchar_len {
@@ -388,6 +394,7 @@ async fn load_info_cc(db_name: &str, db: &mut tokio_postgres::Transaction<'_>) -
     Ok(data)
 }
 
+#[cfg(feature = "postgres")]
 #[inline]
 async fn load_info_tg(_db_name: &str, db: &mut tokio_postgres::Transaction<'_>, data: &mut InfoSchemaType) -> Result<(), String> {
     // Query triggers with full details from pg_trigger
@@ -447,6 +454,7 @@ const NO_ACTION: &str = "NO ACTION";
 #[inline]
 // db: &mut Transaction,
 // db: &mut Client
+#[cfg(feature = "postgres")]
 async fn load_info_fk(db_name: &str, db: &mut tokio_postgres::Transaction<'_>, data: &mut InfoSchemaType) -> Result<(), String> {
     match db.query("SELECT tc.table_schema,  tc.table_name, kcu.column_name,
  ccu.table_schema AS foreign_schema_name, ccu.table_name AS foreign_table_name, ccu.column_name AS foreign_column_name, tc.constraint_name,
@@ -507,6 +515,7 @@ async fn load_info_fk(db_name: &str, db: &mut tokio_postgres::Transaction<'_>, d
     }
 }
 
+#[cfg(feature = "postgres")]
 #[inline]
 async fn load_info_idx(db_name: &str, db: &mut tokio_postgres::Transaction<'_>, data: &mut InfoSchemaType) -> Result<(), String> {
     // Query indexes with detailed column information from pg_index
@@ -611,6 +620,7 @@ async fn load_info_idx(db_name: &str, db: &mut tokio_postgres::Transaction<'_>, 
     Ok(())
 }
 
+#[cfg(feature = "postgres")]
 #[inline]
 async fn load_info_pk(db_name:  &str, db: &mut tokio_postgres::Transaction<'_>, data: &mut InfoSchemaType) -> Result<(), String> {
     // Query primary keys with column order from pg_constraint
@@ -686,6 +696,7 @@ async fn load_info_pk(db_name:  &str, db: &mut tokio_postgres::Transaction<'_>, 
     Ok(())
 }
 
+#[cfg(feature = "postgres")]
 #[inline]
 async fn load_info_grant(db_name: &str, db: &mut tokio_postgres::Transaction<'_>, data: &mut InfoSchemaType) -> Result<(), String> {
     // Query table grants from information_schema
@@ -728,6 +739,7 @@ async fn load_info_grant(db_name: &str, db: &mut tokio_postgres::Transaction<'_>
     Ok(())
 }
 
+#[cfg(feature = "postgres")]
 #[inline]
 pub async fn load_info_schema_owner(db_name: &str, db: &mut tokio_postgres::Transaction<'_>) -> Result<InfoSchemaOwnerType, String> {
     let mut res = HashMap::new();

@@ -5,6 +5,9 @@
 //! in a history table, dry runs, ETL snapshots and loads, git as a script source,
 //! and YT Cluster support. See <https://www.dbinvent.com>.
 #![forbid(unsafe_code)]
+// [db] without a database's feature only the model is built (Cargo.toml [features]): the
+// helpers its deploys use stand unused there
+#![cfg_attr(not(feature = "postgres"), allow(dead_code, unused_imports))]
 
 #[cfg(feature = "slog")]
 #[macro_use] extern crate slog;
@@ -16,6 +19,7 @@ rust_i18n::i18n!("locales", fallback = "en");
 use std::convert::TryFrom;
 use std::fs;
 use std::result::Result;
+#[cfg(feature = "postgres")]
 use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 
@@ -28,13 +32,16 @@ use yaml_validator::Validate;
 
 use schema::Schema;
 
+#[cfg(feature = "postgres")]
 use crate::loader::load_info_schema;
 use crate::utils::OrderedHashMap;
 
 use self::yaml_rust2::Yaml;
 
 pub use i18n::set_lang;
-pub use error::{pg_error, pg_error_in, set_lc_messages, DeployError, DeployStep};
+pub use error::{DeployError, DeployStep};
+#[cfg(feature = "postgres")]
+pub use error::{pg_error, pg_error_in, set_lc_messages};
 
 // first: tr! is declared there, for the modules below
 #[macro_use]
@@ -42,6 +49,14 @@ mod i18n;
 mod error;
 /// [dry-run] the dry run's receiver, and the changes it is handed
 pub mod changes;
+/// [mapping] a schema of one database vendor written as another's
+pub mod mapping;
+/// [sqlite] SQLite's catalog and deploy, through turso
+#[cfg(feature = "sqlite")]
+pub mod sqlite;
+/// [mysql] MySQL's catalog and deploy, through sqlx
+#[cfg(feature = "mysql")]
+pub mod mysql;
 pub mod loader;
 pub mod table;
 pub mod column;
@@ -130,6 +145,7 @@ pub fn get_schema() -> Vec<Yaml> {
 }
 
 
+#[cfg(feature = "postgres")]
 /// Migrate one yaml schema file with options
 pub async fn migrate1(schema: Yaml, db_url: &str) -> Result<usize, String> {
     let config = tokio_postgres::config::Config::from_str(db_url)
@@ -145,6 +161,7 @@ pub async fn migrate1(schema: Yaml, db_url: &str) -> Result<usize, String> {
     Ok(cnt)
 }
 
+#[cfg(feature = "postgres")]
 /// Migrate one yaml schema file with options
 pub async fn migrate_opt(schema: Yaml, db_url: &str, opt: &MigrationOptions) -> Result<usize, String> {
     let config = tokio_postgres::config::Config::from_str(db_url)
@@ -160,6 +177,7 @@ pub async fn migrate_opt(schema: Yaml, db_url: &str, opt: &MigrationOptions) -> 
     Ok(cnt)
 }
 
+#[cfg(feature = "postgres")]
 /// main entry point to apply schema from yaml to the database
 /// return statements to execute
 ///
@@ -171,6 +189,7 @@ pub async fn migrate(schema: Yaml, db: &mut tokio_postgres::Transaction<'_>,
     migrate_plan(schema, db, plan.as_ref().map(|p| p as &changes::DryRun<'_>), file_name, opt).await
 }
 
+#[cfg(feature = "postgres")]
 /// [dry-run] migrate, a dry run handing its callback each table's schema.table and the
 /// changes to make there, beside the SQL
 pub async fn migrate_plan(schema: Yaml, db: &mut tokio_postgres::Transaction<'_>,
@@ -234,6 +253,7 @@ pub fn superset_bundle(schema: Yaml, file_name: &str, db: &superset::SupersetDat
     Ok(superset::bundle(&superset::datasets_of_schemas(&schemas.list), db, std::time::SystemTime::now()))
 }
 
+#[cfg(feature = "postgres")]
 /// The tables of the database a transaction runs in - every schema but the system's,
 /// read as `migrate` reads them - as Apache Superset's import bundle
 pub async fn superset_bundle_db(db: &mut tokio_postgres::Transaction<'_>, target: &superset::SupersetDatabase)

@@ -1,0 +1,42 @@
+# [mapping] SQLite's schemas written as PostgreSQL's (src/mapping.rs): the rules as in
+# postgres-mysql.yaml. SQLite keeps any declared type and stores by its affinity; a snapshot
+# writes the type as declared, lower-cased. Its integers are 64-bit, its dates ISO-8601 text.
+from: sqlite
+to: postgres
+default:
+  types:
+    - { match: 'tinyint|smallint|int2', to: 'smallint', note: "SQLite's integers are 64-bit: a value past smallint fails on load" }  # [review 2026-11-19]
+    # an INTEGER PRIMARY KEY is SQLite's rowid, which counts by itself: PostgreSQL's needs a
+    # default (identity or a sequence), not given here
+    - { match: 'integer|int|mediumint|bigint|int8|unsigned big int', to: 'bigint', note: "SQLite's integers are 64-bit; an integer primary key counted by itself there needs an identity here" }
+    - { match: 'boolean|bool', to: 'boolean' }
+    - { match: 'real|float|double|double precision', to: 'double precision' }
+    - { match: '(?:numeric|decimal)\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)', to: 'numeric($1,$2)' }
+    - { match: '(?:numeric|decimal)\s*\(\s*(\d+)\s*\)', to: 'numeric($1)' }
+    - { match: 'numeric|decimal', to: 'numeric' }
+    - { match: '(?:varchar|character varying|nvarchar|varying character|native character)\s*\(\s*(\d+)\s*\)', to: 'varchar($1)', note: 'SQLite did not hold the length: a longer value there is refused here' }
+    - { match: '(?:char|character|nchar)\s*\(\s*(\d+)\s*\)', to: 'char($1)', note: 'SQLite did not hold the length: a longer value there is refused here' }
+    - { match: 'text|clob|varchar|character varying|char|character', to: 'text' }
+    - { match: 'blob', to: 'bytea' }
+    - { match: 'date', to: 'date' }
+    # [review 2026-11-19] without a time zone, as SQLite's CURRENT_TIMESTAMP writes UTC with none: an offset in a value is not kept
+    - { match: 'datetime|timestamp', to: 'timestamp', note: "SQLite's ISO-8601 text: a value that is no date fails on load, and an offset in one is not kept - map it by hand to timestamptz when the values carry one" }
+    - { match: 'time', to: 'time' }
+    - { match: 'json', to: 'jsonb' }
+    - { match: 'uuid', to: 'uuid' }
+  defaults:
+    # [review 2026-11-19] SQLite's CURRENT_TIMESTAMP is UTC; now() on a timestamp would be the session's zone
+    - { match: 'current_timestamp', to: "(now() at time zone 'utc')" }
+    - { match: 'current_date', to: 'CURRENT_DATE' }
+    - { match: 'current_time', to: 'CURRENT_TIME' }
+    # booleans SQLite keeps as 0 and 1
+    - { match: '0|false', type: 'boolean|bool', to: 'false' }
+    - { match: '1|true', type: 'boolean|bool', to: 'true' }
+    - { match: '\(.*\)', refuse: "an expression of SQLite's own functions: write it for PostgreSQL by hand" }
+  features:
+    # SQLite's triggers are SQL of their own, not a function's
+    - { at: table.triggers, drop: true }
+    - { at: column.index.using, value: btree, keep: true }
+    - { at: column.index.using, refuse: "an index method SQLite has not" }
+    - { at: table.data, keep: true, note: "its rows as written: SQLite's values (0 and 1 for booleans) are not converted" }
+    - { at: table.data_file, keep: true, note: "its file's rows as written: SQLite's values are not converted" }
