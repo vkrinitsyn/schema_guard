@@ -1,6 +1,6 @@
 [package]
 name = "schema_guard_tokio"
-version = "2.4.1"
+version = "2.4.2"
 authors = ["V.Krinitsyn <V.Krinitsyn@gmail.com>"]
 edition = "2024"
 description = "Schema Guard: YAML based Relation Database Schema Management tool for Postgres"
@@ -51,7 +51,10 @@ tokio = { version = "^1.54.1", features = ["test-util", "full"] }
 default = ["postgres"]
 postgres = ["dep:tokio-postgres", "dep:tokio"]
 # [sqlite] SQLite (owner, 2026-11-18): src/sqlite.rs
-sqlite = ["dep:turso"]
+# [sqlite-core] the engine alone, on a SQLite connection of the caller's (sqlite::SqliteDb):
+# yt-sqlite's, a loadable extension's own connection
+sqlite-core = []
+sqlite = ["sqlite-core", "dep:turso"]
 # [mysql] MySQL (owner, 2026-11-19): src/mysql.rs
 mysql = ["dep:sqlx", "dep:tokio"]
 #default = ["slog"]

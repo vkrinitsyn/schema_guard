@@ -43,6 +43,9 @@ schema is a MySQL database (`public` the connection's current one); changes are 
 `ALTER TABLE`. MySQL commits each DDL by itself: everything is planned before the first statement
 runs, and a statement that fails says how many ran before it.
 
+`sqlite-core` (since 2.4.2): the same engine on a SQLite connection of your own, which implements
+`sqlite::SqliteDb` (a query's rows, a batch, whether outside a transaction).
+
 `sqlite` (SQLite embedded, through turso as yt-lite uses it; async): `schema_guard_tokio::sqlite::migrate` deploys a YAML
 schema to a connection, `plan` says what it would run, `load_info_schema` reads the catalog into the
 model. A schema is `main` (as `public` is read too) or a database attached by that name. What SQLite's

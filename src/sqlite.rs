@@ -23,7 +23,54 @@
 
 use std::collections::HashMap;
 
-use turso::{Connection, Value};
+/// [sqlite-core] A value of a row, as the engine reads one
+#[derive(Debug, Clone, PartialEq)]
+pub enum Value {
+    Null,
+    Integer(i64),
+    Real(f64),
+    Text(String),
+    Blob(Vec<u8>),
+}
+
+/// [sqlite-core] The SQLite connection the engine reads and deploys through (owner, 2026-11-19:
+/// yt-sqlite's migrate): turso's with the `sqlite` feature; any other - rusqlite's, a loadable
+/// extension's own - implements these three with `sqlite-core` alone
+pub trait SqliteDb {
+    /// a query's rows, each value as SQLite holds it
+    fn rows(&self, sql: &str) -> impl std::future::Future<Output = Result<Vec<Vec<Value>>, String>>;
+    /// statements that return no rows
+    fn batch(&self, sql: &str) -> impl std::future::Future<Output = Result<(), String>>;
+    /// outside an explicit transaction
+    fn autocommit(&self) -> Result<bool, String>;
+}
+
+#[cfg(feature = "sqlite")]
+impl SqliteDb for turso::Connection {
+    async fn rows(&self, sql: &str) -> Result<Vec<Vec<Value>>, String> {
+        let mut r = self.query(sql, ()).await.map_err(|e| e.to_string())?;
+        let n = r.column_count();
+        let mut out = Vec::new();
+        while let Some(row) = r.next().await.map_err(|e| e.to_string())? {
+            out.push((0..n).map(|i| match row.get_value(i) {
+                Ok(turso::Value::Integer(v)) => Value::Integer(v),
+                Ok(turso::Value::Real(v)) => Value::Real(v),
+                Ok(turso::Value::Text(v)) => Value::Text(v),
+                Ok(turso::Value::Blob(v)) => Value::Blob(v),
+                _ => Value::Null,
+            }).collect());
+        }
+        Ok(out)
+    }
+
+    async fn batch(&self, sql: &str) -> Result<(), String> {
+        self.execute_batch(sql).await.map_err(|e| e.to_string())
+    }
+
+    fn autocommit(&self) -> Result<bool, String> {
+        self.is_autocommit().map_err(|e| e.to_string())
+    }
+}
 use yaml_rust2::Yaml;
 
 use crate::column::Column;
@@ -181,7 +228,7 @@ fn lit(v: &str) -> String {
     format!("'{}'", v.replace('\'', "''"))
 }
 
-fn err(e: turso::Error, what: &str) -> String {
+fn err<E: std::fmt::Display>(e: E, what: &str) -> String {
     format!("sqlite: {}: {}", what, e)
 }
 
@@ -206,24 +253,18 @@ fn int(v: &Value) -> i64 {
 }
 
 /// [turso] a statement's rows, each a row of values
-async fn rows(conn: &Connection, sql: &str, what: &str) -> Result<Vec<Vec<Value>>, String> {
-    let mut r = conn.query(sql, ()).await.map_err(|e| err(e, what))?;
-    let n = r.column_count();
-    let mut out = Vec::new();
-    while let Some(row) = r.next().await.map_err(|e| err(e, what))? {
-        out.push((0..n).map(|i| row.get_value(i).unwrap_or(Value::Null)).collect());
-    }
-    Ok(out)
+async fn rows<D: SqliteDb>(conn: &D, sql: &str, what: &str) -> Result<Vec<Vec<Value>>, String> {
+    conn.rows(sql).await.map_err(|e| err(e, what))
 }
 
 /// the connection's databases: main, and every one attached (not temp)
-async fn databases(conn: &Connection) -> Result<Vec<String>, String> {
+async fn databases<D: SqliteDb>(conn: &D) -> Result<Vec<String>, String> {
     Ok(rows(conn, "PRAGMA database_list", "database_list").await?.iter()
         .filter_map(|r| r.get(1).and_then(text)).filter(|n| n != "temp").collect())
 }
 
 /// the database a schema's name is: main for `main` and `public`, else one attached of its name
-async fn database_of(conn: &Connection, schema: &str) -> Result<String, String> {
+async fn database_of<D: SqliteDb>(conn: &D, schema: &str) -> Result<String, String> {
     if schema.is_empty() || schema.eq_ignore_ascii_case("main") || schema.eq_ignore_ascii_case("public") {
         return Ok("main".into());
     }
@@ -232,7 +273,7 @@ async fn database_of(conn: &Connection, schema: &str) -> Result<String, String> 
 }
 
 /// every table of a database, as SQLite has it
-async fn read_tables(conn: &Connection, db: &str) -> Result<HashMap<String, SqTable>, String> {
+async fn read_tables<D: SqliteDb>(conn: &D, db: &str) -> Result<HashMap<String, SqTable>, String> {
     let mut out = HashMap::new();
     let schema = rows(conn, &format!("SELECT type, name, tbl_name, sql FROM {}.sqlite_schema", q(db)), "sqlite_schema").await?;
     let of = |r: &Vec<Value>, i: usize| r.get(i).and_then(text).unwrap_or_default();
@@ -296,7 +337,7 @@ fn mentions(sql: &str, table: &str) -> bool {
 
 /// [turso] the rows of `db`.`table` and of the tables naming it whose foreign key finds no row:
 /// SQLite's foreign_key_check, which turso has not
-async fn fk_broken(conn: &Connection, db: &str, table: &str) -> Result<i64, String> {
+async fn fk_broken<D: SqliteDb>(conn: &D, db: &str, table: &str) -> Result<i64, String> {
     let all = read_tables(conn, db).await?;
     let mut bad = 0;
     for (child, t) in &all {
@@ -316,7 +357,7 @@ async fn fk_broken(conn: &Connection, db: &str, table: &str) -> Result<i64, Stri
 
 /// The catalog read into the schema's model, a schema a database (main, and each attached):
 /// what a snapshot of SQLite writes
-pub async fn load_info_schema(conn: &Connection) -> Result<InfoSchemaType, String> {
+pub async fn load_info_schema<D: SqliteDb>(conn: &D) -> Result<InfoSchemaType, String> {
     let mut out = InfoSchemaType::new();
     for db in databases(conn).await? {
         let mut tables = HashMap::new();
@@ -522,7 +563,7 @@ pub struct SqlitePlan {
 }
 
 /// The statements that make the database what the YAML schema says, without running them
-pub async fn plan(schema: Yaml, conn: &Connection, file_name: &str, opt: &MigrationOptions) -> Result<SqlitePlan, String> {
+pub async fn plan<D: SqliteDb>(schema: Yaml, conn: &D, file_name: &str, opt: &MigrationOptions) -> Result<SqlitePlan, String> {
     let schemas = crate::parse_yaml_schema(schema, file_name)?;
     let mut p = SqlitePlan::default();
     for s in &schemas.list {
@@ -534,13 +575,13 @@ pub async fn plan(schema: Yaml, conn: &Connection, file_name: &str, opt: &Migrat
 /// The YAML schema deployed: planned, then run in one transaction - foreign keys off around a
 /// rebuild and checked before the commit. With `plan_only` nothing is run. The statements are
 /// returned either way
-pub async fn migrate(schema: Yaml, conn: &Connection, plan_only: bool, file_name: &str, opt: &MigrationOptions)
+pub async fn migrate<D: SqliteDb>(schema: Yaml, conn: &D, plan_only: bool, file_name: &str, opt: &MigrationOptions)
     -> Result<SqlitePlan, String> {
     let p = plan(schema, conn, file_name, opt).await?;
     if plan_only || p.statements.is_empty() {
         return Ok(p);
     }
-    if !conn.is_autocommit().map_err(|e| err(e, "autocommit"))? {
+    if !conn.autocommit().map_err(|e| err(e, "autocommit"))? {
         // [review 2026-11-18] said, not SQLite's "cannot start a transaction within a transaction"
         return Err("sqlite: the connection is in a transaction: migrate runs its own, and turns foreign keys \
                     off around a rebuild, which only works outside one".into());
@@ -549,12 +590,12 @@ pub async fn migrate(schema: Yaml, conn: &Connection, plan_only: bool, file_name
     let off = fk_on && !p.rebuilt.is_empty();
     if off {
         // only outside a transaction does it change anything
-        conn.execute_batch("PRAGMA foreign_keys = OFF").await.map_err(|e| err(e, "foreign_keys off"))?;
+        conn.batch("PRAGMA foreign_keys = OFF").await.map_err(|e| err(e, "foreign_keys off"))?;
     }
-    conn.execute_batch("BEGIN").await.map_err(|e| err(e, "begin"))?;
+    conn.batch("BEGIN").await.map_err(|e| err(e, "begin"))?;
     let result = async {
         for st in &p.statements {
-            conn.execute_batch(st).await.map_err(|e| format!("sqlite: {}\n  in: {}", e, st))?;
+            conn.batch(st).await.map_err(|e| format!("sqlite: {}\n  in: {}", e, st))?;
         }
         let mut bad = 0;
         for (db, table) in &p.rebuilt_tables {
@@ -564,18 +605,18 @@ pub async fn migrate(schema: Yaml, conn: &Connection, plan_only: bool, file_name
             return Err(format!("sqlite: {} row(s) break a foreign key after rebuilding {}: nothing changed",
                                bad, p.rebuilt.join(", ")));
         }
-        conn.execute_batch("COMMIT").await.map_err(|e| err(e, "commit"))
+        conn.batch("COMMIT").await.map_err(|e| err(e, "commit"))
     }.await;
     if result.is_err() {
-        let _ = conn.execute_batch("ROLLBACK").await;
+        let _ = conn.batch("ROLLBACK").await;
     }
     if off {
-        let _ = conn.execute_batch("PRAGMA foreign_keys = ON").await;
+        let _ = conn.batch("PRAGMA foreign_keys = ON").await;
     }
     result.map(|_| p)
 }
 
-async fn plan_schema(s: &Schema, conn: &Connection, opt: &MigrationOptions, p: &mut SqlitePlan) -> Result<(), String> {
+async fn plan_schema<D: SqliteDb>(s: &Schema, conn: &D, opt: &MigrationOptions, p: &mut SqlitePlan) -> Result<(), String> {
     let db = database_of(conn, &s.schema_name).await?;
     let existing = read_tables(conn, &db).await?;
     // [review 2026-11-19] a schema's owner reads as its name when none is given (Schema::new):
@@ -750,9 +791,10 @@ fn plan_table(db: &str, t: &Table, have: &SqTable, existing_names: &std::collect
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "sqlite"))]
 mod tests {
     use super::*;
+    use turso::Connection;
     use yaml_rust2::YamlLoader;
 
     fn yaml(s: &str) -> Yaml {
@@ -833,7 +875,7 @@ database:
     }
 
     async fn str_of(c: &Connection, sql: &str) -> String {
-        rows(c, sql, "test").await.unwrap()[0][0].as_text().cloned().unwrap_or_default()
+        match &rows(c, sql, "test").await.unwrap()[0][0] { Value::Text(t) => t.clone(), _ => String::new() }
     }
 
     #[tokio::test]

@@ -31,6 +31,7 @@ in a row, and each time it produces only what is missing.
 |---|---|
 | `postgres` (default) | tokio-postgres: `migrate*`, `migrate_plan`, `loader::load_info_*`, `pg_error*`, `set_lc_messages`, `superset_bundle_db`, the `_pg` deploys |
 | `mysql` | sqlx's MySQL driver (pure Rust, tokio), async: `mysql::{migrate, plan, plan_on, load_info_schema}` on a `MySqlConnection` |
+| `sqlite-core` | the SQLite engine alone, on a connection of the caller's: `sqlite::SqliteDb` (rows, batch, autocommit) - a loadable extension's own (yt-sqlite) |
 | `sqlite` | turso, the embedded SQLite yt-lite uses (no system library), async: `sqlite::{migrate, plan, load_info_schema}` on a `turso::Connection` |
 | `slog` | executed SQL logged at debug |
 
@@ -357,6 +358,8 @@ only. The tests under `tests/` that need PostgreSQL carry `required-features = [
 
 ## State on 2026-11-19
 
+- 2.4.2, uncommitted: `sqlite-core` and `sqlite::SqliteDb` - the SQLite engine on any connection (yt-sqlite's
+  `yt_migrate`); with `sqlite`, turso's connection implements it as before.
 - 2.4.0 published (sqlite through turso, mysql, the mappings). 2.4.1, uncommitted: a type rule's
   `indexed: true` (an indexed text to MySQL's varchar(255), as MySQL indexes no longtext), a key's
   nullability no change in SQLite - both found by sge-sqlite and sge-mysql's round trip.

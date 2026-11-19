@@ -52,7 +52,7 @@ pub mod changes;
 /// [mapping] a schema of one database vendor written as another's
 pub mod mapping;
 /// [sqlite] SQLite's catalog and deploy, through turso
-#[cfg(feature = "sqlite")]
+#[cfg(feature = "sqlite-core")]
 pub mod sqlite;
 /// [mysql] MySQL's catalog and deploy, through sqlx
 #[cfg(feature = "mysql")]
