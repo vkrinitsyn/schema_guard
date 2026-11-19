@@ -92,7 +92,7 @@ fn err(e: sqlx::Error, what: &str) -> String {
 /// [mysql] a statement's rows, each value as text (NULL as None): the catalog's columns cast to
 /// CHAR in the query, as MySQL 8 sends some of them as binary
 async fn rows(conn: &mut MySqlConnection, sql: &str, what: &str) -> Result<Vec<Vec<Option<String>>>, String> {
-    let rs = sqlx::query(sql).fetch_all(&mut *conn).await.map_err(|e| err(e, what))?;
+    let rs = sqlx::query(sqlx::AssertSqlSafe(sql.to_string())).fetch_all(&mut *conn).await.map_err(|e| err(e, what))?;
     Ok(rs.iter().map(|r| (0..r.len()).map(|i| r.try_get::<Option<String>, _>(i).ok().flatten()).collect()).collect())
 }
 
@@ -506,7 +506,7 @@ pub async fn migrate(schema: Yaml, conn: &mut MySqlConnection, plan_only: bool, 
         return Ok(p);
     }
     for (i, st) in p.statements.iter().enumerate() {
-        sqlx::raw_sql(st).execute(&mut *conn).await.map_err(|e| format!(
+        sqlx::raw_sql(sqlx::AssertSqlSafe(st.clone())).execute(&mut *conn).await.map_err(|e| format!(
             "mysql: {}\n  in: {}\n  {} of {} statement(s) ran before it, and stay (MySQL commits each DDL by itself)",
             e, st, i, p.statements.len()))?;
     }

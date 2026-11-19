@@ -52,9 +52,9 @@ async fn every_sample_is_deployed_to_mysql_read_back_and_applied_again_with_noth
             .map(|s| if s.schema_name.eq_ignore_ascii_case("public") { current.clone() } else { s.schema_name.clone() }).collect();
         let mut c = sqlx::MySqlConnection::connect(&url).await.unwrap();
         for db in &dbs {
-            sqlx::raw_sql(&format!("DROP DATABASE IF EXISTS `{}`; CREATE DATABASE `{}`", db, db)).execute(&mut c).await.unwrap();
+            sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DROP DATABASE IF EXISTS `{}`; CREATE DATABASE `{}`", db, db))).execute(&mut c).await.unwrap();
         }
-        sqlx::raw_sql(&format!("USE `{}`", current)).execute(&mut c).await.unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("USE `{}`", current))).execute(&mut c).await.unwrap();
 
         let first = mysql::migrate(mapped.clone(), &mut c, false, &f, &opt).await.unwrap_or_else(|e| panic!("{}: {}", f, e));
         assert!(!first.statements.is_empty(), "{}: nothing made", f);
