@@ -62,6 +62,7 @@ pub mod table;
 pub mod column;
 pub mod index;
 pub mod grant;
+pub mod security;
 pub mod schema;
 pub mod superset;
 pub mod utils;
@@ -138,6 +139,80 @@ pub struct MigrationOptions {
     /// if ddl statement execution failed, then 100 retry max with delay 1 sec, otherwise return error immediately, default: false
     /// <li> default: false - do not try to retry
     pub with_ddl_retry: bool,
+    /// [security] the tables' `security` declarations for this deploy: `Off` - ignored, nothing
+    /// installed or registered; `Lsr(traversal)` - registered only, labac's policies taken off where
+    /// they were, and with `true` the file's traversal checked (a path leads through tables of the
+    /// same file, the aliases unique in it - `security::link`); `Rls` - policies on every declared
+    /// table, the paths tested by the database
+    /// <li> default: Off
+    pub security: crate::security::SecurityMode,
+}
+
+/// [options] A builder of the options: the defaults, and each option set by a method
+/// of its name - `MigrationOptions::new().with_size_cut(true).security(SecurityMode::Lsr(true))`. A struct
+/// literal names every field; the builder keeps working when an option is added.
+impl MigrationOptions {
+    /// every option at its default: as [`Default`]
+    pub fn new() -> MigrationOptions {
+        MigrationOptions::default()
+    }
+
+    /// apply a narrowing or incompatible column type change
+    #[must_use]
+    pub fn with_size_cut(mut self, on: bool) -> Self {
+        self.with_size_cut = on;
+        self
+    }
+
+    /// drop and recreate an index (or a primary key) whose definition changed
+    #[must_use]
+    pub fn with_index_drop(mut self, on: bool) -> Self {
+        self.with_index_drop = on;
+        self
+    }
+
+    /// drop and recreate a trigger whose definition changed
+    #[must_use]
+    pub fn with_trigger_drop(mut self, on: bool) -> Self {
+        self.with_trigger_drop = on;
+        self
+    }
+
+    /// neither create nor compare triggers
+    #[must_use]
+    pub fn exclude_triggers(mut self, on: bool) -> Self {
+        self.exclude_triggers = on;
+        self
+    }
+
+    /// revoke a privilege the YAML no longer grants
+    #[must_use]
+    pub fn with_revoke(mut self, on: bool) -> Self {
+        self.with_revoke = on;
+        self
+    }
+
+    /// skip a refused change and say its SQL, instead of failing
+    #[must_use]
+    pub fn without_failfast(mut self, on: bool) -> Self {
+        self.without_failfast = on;
+        self
+    }
+
+    /// run each DDL statement in a block that retries on a lock it cannot take
+    #[must_use]
+    pub fn with_ddl_retry(mut self, on: bool) -> Self {
+        self.with_ddl_retry = on;
+        self
+    }
+
+    /// [security] the tables' declarations for this deploy: off, lsr - with the file's traversal
+    /// checked or not - or rls ([`crate::security::SecurityMode`])
+    #[must_use]
+    pub fn security(mut self, mode: crate::security::SecurityMode) -> Self {
+        self.security = mode;
+        self
+    }
 }
 
 pub fn get_schema() -> Vec<Yaml> {
@@ -205,10 +280,18 @@ pub async fn migrate_plan(schema: Yaml, db: &mut tokio_postgres::Transaction<'_>
         .await.map_err(|e| tr!("lib.db_connection", err = pg_error(&e)))?[0].get(0);
     // load schema
     let mut info = load_info_schema(db_name.as_str(), db).await?;
-    let schemas = parse_yaml_schema(schema, file_name)?;
+    let mut schemas = parse_yaml_schema(schema, file_name)?;
+    // [security] the file's declarations linked - a path that reaches an entity the file defines takes
+    // its alias - and, under `Lsr(true)`, checked before anything is changed
+    if opt.security != security::SecurityMode::Off {
+        security::link(&mut schemas, opt.security.traversal())
+            .map_err(|e| if file_name.is_empty() { e } else { format!("{e} ({file_name})") })?;
+    }
     for s in &schemas.list {
         cnt += s.deploy_all_tables_plan_pg(&mut info, db, callback, opt).await.map_err(|e| e.to_string())?;
     }
+    // [security] the declarations, once every table of the file exists (`security::deploy_all`)
+    cnt += security::deploy_all(&schemas, &info, db, callback, opt, file_name).await?;
 
     for s in &schemas.list {
         cnt += s.deploy_all_fk_plan_pg(&schemas, &mut info, db, opt.with_ddl_retry, callback).await.map_err(|e| e.to_string())?;
@@ -345,5 +428,29 @@ mod tests {
         assert!(!m.with_revoke);
         assert!(!m.with_trigger_drop);
         assert!(!m.exclude_triggers);
+    }
+}
+
+
+#[cfg(test)]
+mod options_tests {
+    use super::*;
+    use crate::security::SecurityMode;
+
+    /// [options] the builder sets each option, the rest at their defaults
+    #[test]
+    fn the_builder_sets_each_option() {
+        let o = MigrationOptions::new().with_size_cut(true).with_index_drop(true).with_trigger_drop(true).exclude_triggers(true)
+            .with_revoke(true).without_failfast(true).with_ddl_retry(true).security(SecurityMode::Rls);
+        assert!(o.with_size_cut && o.with_index_drop && o.with_trigger_drop && o.exclude_triggers && o.with_revoke
+            && o.without_failfast && o.with_ddl_retry);
+        assert_eq!(o.security, SecurityMode::Rls);
+        let d = MigrationOptions::new();
+        assert!(!d.with_size_cut && !d.with_revoke);
+        assert_eq!(d.security, SecurityMode::Off, "security is off unless a mode is named");
+        assert!(!MigrationOptions::new().with_revoke(true).with_revoke(false).with_revoke, "the last call wins");
+        // the traversal is the lsr mode's: checked with true, and in no other mode
+        assert!(o.security(SecurityMode::Lsr(true)).security.traversal());
+        assert!(!SecurityMode::Lsr(false).traversal() && !SecurityMode::Rls.traversal() && !SecurityMode::Off.traversal());
     }
 }

@@ -1,6 +1,6 @@
-//! [sqlite] SQLite (feature `sqlite`, owner 2026-11-18): its catalog read into the schema's model,
-//! and a YAML schema deployed to it through the driver: turso, the embedded SQLite yt-lite uses
-//! (owner, 2026-11-19), async. A connection that attaches databases is built with
+//! [sqlite] SQLite (feature `sqlite`): its catalog read into the schema's model,
+//! and a YAML schema deployed to it through the driver: turso, the embedded SQLite yt-lite uses,
+//! async. A connection that attaches databases is built with
 //! `experimental_attach(true)`.
 //!
 //! A schema's name is a database of the connection: `main` - the file itself, as `public` is
@@ -33,8 +33,8 @@ pub enum Value {
     Blob(Vec<u8>),
 }
 
-/// [sqlite-core] The SQLite connection the engine reads and deploys through (owner, 2026-11-19:
-/// yt-sqlite's migrate): turso's with the `sqlite` feature; any other - rusqlite's, a loadable
+/// [sqlite-core] The SQLite connection the engine reads and deploys through (yt-sqlite's
+/// migrate): turso's with the `sqlite` feature; any other - rusqlite's, a loadable
 /// extension's own - implements these three with `sqlite-core` alone
 pub trait SqliteDb {
     /// a query's rows, each value as SQLite holds it
@@ -391,7 +391,7 @@ pub async fn load_info_schema<D: SqliteDb>(conn: &D) -> Result<InfoSchemaType, S
                 trigger_name: n.clone(), event: String::new(), orientation: String::new(), proc: sql.clone() })).collect();
             tables.insert(name.clone(), PgTable {
                 table_name: name, columns, fks, triggers, indexes, grants: HashMap::new(), primary_key,
-                sort_order: i + 1, table_comment: None, owner: None });
+                sort_order: i + 1, table_comment: None, owner: None, security: None });
         }
         out.insert(db, tables);
     }

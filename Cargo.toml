@@ -1,6 +1,6 @@
 [package]
 name = "schema_guard_tokio"
-version = "2.4.2"
+version = "2.5.0"
 authors = ["V.Krinitsyn <V.Krinitsyn@gmail.com>"]
 edition = "2024"
 description = "Schema Guard: YAML based Relation Database Schema Management tool for Postgres"
@@ -30,7 +30,7 @@ thiserror = "^2.0"
 # [db] the runtime PostgreSQL's driver runs on: with its feature (and for the tests)
 tokio = { version = "^1.54.1", features = ["test-util", "full"], optional = true }
 tokio-postgres = { version = "^0.7.18", optional = true }
-# [sqlite] SQLite, embedded: turso, as yt-lite uses it (owner, 2026-11-19) - no system library
+# [sqlite] SQLite, embedded: turso, as yt-lite uses it - no system library
 turso = { version = "=0.9.0-pre.5", optional = true }
 # [mysql] MySQL through sqlx (its MySQL driver, pure Rust, on tokio): no client library. 0.9 with TLS
 # (rustls) and without its RSA: sqlx 0.8 took rsa 0.9 (RUSTSEC-2023-0071, cargo audit failed, 2026-11-19);
@@ -45,17 +45,17 @@ rust-i18n = "^4.2.4"
 tokio = { version = "^1.54.1", features = ["test-util", "full"] }
 
 [features]
-# [db] one feature a database, PostgreSQL's by default (owner, 2026-11-17): each database is a
+# [db] one feature a database, PostgreSQL's by default: each database is a
 # binary of its own (sge, ...), built with its feature. Without one, the schema's model only:
 # its YAML read and checked, and compared with a loaded one - no database read or changed
 default = ["postgres"]
 postgres = ["dep:tokio-postgres", "dep:tokio"]
-# [sqlite] SQLite (owner, 2026-11-18): src/sqlite.rs
+# [sqlite] SQLite: src/sqlite.rs
 # [sqlite-core] the engine alone, on a SQLite connection of the caller's (sqlite::SqliteDb):
 # yt-sqlite's, a loadable extension's own connection
 sqlite-core = []
 sqlite = ["sqlite-core", "dep:turso"]
-# [mysql] MySQL (owner, 2026-11-19): src/mysql.rs
+# [mysql] MySQL: src/mysql.rs
 mysql = ["dep:sqlx", "dep:tokio"]
 #default = ["slog"]
 # show extra messages when do SQL execution using slog logger

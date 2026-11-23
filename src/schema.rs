@@ -107,7 +107,10 @@ impl Schema {
 
     #[cfg(feature = "postgres")]
     /// [dry-run] deploy_all_tables_pg, a dry run handing its callback each table's
-    /// schema.table and the changes to make there, beside the SQL
+    /// schema.table and the changes to make there, beside the SQL.
+    /// [security] the tables' `security` declarations are not deployed here: `migrate_plan` does it
+    /// after every schema's tables - a caller of this runs `security::link` on the parsed file
+    /// before and `security::deploy_all` after
     pub async fn deploy_all_tables_plan_pg(&self, schema: &mut InfoSchemaType,
                                    db: &mut tokio_postgres::Transaction<'_>,
                                    callback: Option<&crate::changes::DryRun<'_>>,

@@ -55,6 +55,9 @@ pub struct PgTable {
     pub sort_order: usize,
     pub table_comment: Option<String>,
     pub owner: Option<String>,
+    /// [security] the declaration the registry (`labac.tables`) holds of it
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub security: Option<crate::security::Security>,
 }
 
 /// Primary key information loaded from DB
@@ -205,7 +208,35 @@ pub async fn load_info_schema(db_name: &str, db: &mut tokio_postgres::Transactio
     let _ = load_info_fk(db_name, db, &mut data).await?;
     let _ = load_info_tg(db_name, db, &mut data).await?;
     let _ = load_info_grant(db_name, db, &mut data).await?;
+    load_info_security(db, &mut data).await?;
     Ok(data)
+}
+
+/// [security] the registry's declarations, where the database has one
+#[cfg(feature = "postgres")]
+async fn load_info_security(db: &mut tokio_postgres::Transaction<'_>, data: &mut InfoSchemaType) -> Result<(), String> {
+    let has: bool = db.query_one("SELECT to_regclass('labac.tables') IS NOT NULL", &[]).await
+        .map_err(|e| tr!("loader.catalog", what = "labac.tables", err = crate::pg_error(&e)))?.get(0);
+    if !has {
+        return Ok(());
+    }
+    let rows = crate::security::registry(db).await
+        .map_err(|e| tr!("loader.catalog", what = "labac.tables", err = crate::pg_error(&e)))?;
+    for r in &rows {
+        let mut d = r.security();
+        // the alias as a YAML would say it: left out where it is the entity's own - the defining
+        // table's column name, or what the table that defines the entity says
+        let entity = r.entity().and_then(|e| rows.iter().find(|x| x.defining() && x.entity().as_deref() == Some(e.as_str())
+            && !(x.schema == r.schema && x.table == r.table)));
+        let own = crate::security::Security { alias: None, ..d.clone() }.alias_or_column();
+        if (r.defining() && r.alias == own) || entity.is_some_and(|x| x.alias == r.alias) || (!r.defining() && entity.is_none() && r.alias == own) {
+            d.alias = None;
+        }
+        if let Some(table) = data.get_mut(&r.schema).and_then(|ts| ts.get_mut(&r.table)) {
+            table.security = Some(d);
+        }
+    }
+    Ok(())
 }
 
 
@@ -249,7 +280,7 @@ async fn load_info_cc(db_name: &str, db: &mut tokio_postgres::Transaction<'_>) -
         if is_array {
             data_type = data_type[1..].to_string();
         }
-        // [mapping] char(n) - bpchar - with its length too, as varchar (owner, 2026-11-18): without
+        // [mapping] char(n) - bpchar - with its length too, as varchar: without
         // it a cross-vendor mapping cannot tell char(1) from char(80), and a schema's char(n)
         // compared with a bare bpchar as a size change on every deploy
         if matches!(data_type.to_lowercase().as_str(), "varchar" | "bpchar") {
@@ -785,6 +816,7 @@ impl Default for PgTable {
             sort_order: 0,
             table_comment: None,
             owner: None,
+            security: None,
         }
     }
 }

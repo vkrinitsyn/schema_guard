@@ -1,6 +1,6 @@
 //! [sqlite] The samples of this crate (tests/*.yaml, PostgreSQL's schemas) applied to SQLite, the
-//! embedded one, turso as yt-lite uses it (owner, 2026-11-19: "pg (existing samples) to sqlite (rust embedded
-//! version) is tested as part of schemaguard e2e"): each mapped by the built-in postgres-sqlite
+//! embedded one, turso as yt-lite uses it - PostgreSQL's existing samples to the embedded SQLite, as
+//! part of schema_guard's end-to-end tests: each mapped by the built-in postgres-sqlite
 //! mapping, deployed, read back, applied a second time with nothing to do, and written to. No
 //! server: each sample on in-memory databases of turso, the embedded SQLite yt-lite uses. And the rule of the conversion: it is made for the
 //! target alone - the same samples applied to PostgreSQL are left as they are.

@@ -1,4 +1,4 @@
-# [mapping] The mappings' matrix (owner, 2026-11-18): a section a source vendor, in it a row a type,
+# [mapping] The mappings' matrix: a section a source vendor, in it a row a type,
 # default or feature of that vendor's, a column a target - what that target's version makes of it.
 # src/mapping.rs's tests check every cell, and that every rule of every mapping file is reached by
 # a row of its source's section: a rule added with no row here fails them. A cell: the written

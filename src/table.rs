@@ -56,6 +56,11 @@ pub struct Table {
     /// List of template names to inherit from (format: "schema.table" or just "table" for same schema)
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub use_templates: Vec<String>,
+
+    /// [security] row access by the resource ids of a column or a path (the key
+    /// was `labac` before): see [`crate::security`]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub security: Option<crate::security::Security>,
 }
 
 
@@ -174,6 +179,7 @@ impl Default for Table {
             grant: vec![],
             is_template: None,
             use_templates: vec![],
+            security: None,
         }
     }
 }
@@ -240,6 +246,15 @@ impl Table {
             }
         }
 
+        // [security] the declaration, checked against the table's columns
+        let security = crate::security::Security::read(&input["security"])
+            .map_err(|e| format!("{e}: table {table_name}{}", Self::in_file(file)))?;
+        if let Some(l) = &security {
+            let names: Vec<String> = columns.list.iter().map(|c| c.name.clone()).collect();
+            if let Some(p) = l.problem(table_name, &names) {
+                return Err(format!("{p}: table {table_name}{}", Self::in_file(file)));
+            }
+        }
         let etl = &input["data_file"];
         // Parse template field - can be boolean or array of strings
         let template_field = &input["template"];
@@ -275,6 +290,7 @@ impl Table {
             grant: YGrant::new(input["grant"].as_vec()),
             is_template,
             use_templates,
+            security,
         })
     }
 
@@ -325,6 +341,9 @@ impl Table {
         let mut sql = String::new();
         let mut comments = String::new();
         let mut exec = false;
+        // [security] [review 2026-11-22] the table is registered rls: its row-level security is forced
+        // until this run's security pass, which comes after the table's rows
+        let was_rls = dbc.get(schema).and_then(|s| s.get(&self.table_name)).and_then(|t| t.security.as_ref()).is_some_and(|l| l.rls);
         // [dry-run] what this deploy changes, beside its SQL
         let mut changes = Changes::default();
         let do_create = match dbc.get_mut(schema) {
@@ -655,6 +674,7 @@ impl Table {
                 sort_order: 0,
                 table_comment: None,
                 owner: if self.owner.len() > 0 { Some(self.owner.clone()) } else { None },
+                security: None,
             };
 
             changes.create = true;
@@ -767,6 +787,11 @@ impl Table {
         changes.indexes = changed(&indexes_before, &indexes_after);
         changes.grants = changed(&grants_before, &grants_after);
 
+        // [security] the declaration itself is deployed after every table of the run exists
+        // (`security::deploy`, from `migrate_plan`): its path may lead to a table further down the file.
+        // Here only what the rows below need: as the deploy's options take it
+        let security = self.security.as_ref().and_then(|l| l.under(opt.security));
+
         let mut data = String::new();
         for row in &self.data {
             self.insert(&mut data, row, schema);
@@ -774,6 +799,14 @@ impl Table {
         if !data.is_empty() {
             changes.rows = self.data.len();
         }
+        // [labac] the owner's own rows go in with FORCE lifted for them: on a table this deploy makes
+        // rls, and [review 2026-11-22] on one the deploy before made so - a declaration (or a mode)
+        // that takes rls off is deployed after the rows, and `off` leaves the table as it is
+        let data = match &security {
+            Some(l) if l.rls => l.around_data(schema, &self.table_name, data),
+            _ if was_rls => crate::security::force_lifted(schema, &self.table_name, data),
+            _ => data,
+        };
 
         let exec = exec || !indexes_sql.is_empty() || !grants_sql.is_empty();
 
@@ -1081,6 +1114,12 @@ impl Table {
         if self.constraint.is_empty() && !template.constraint.is_empty() {
             self.constraint = template.constraint.clone();
         }
+
+        // [security] Inherit the declaration if not set: each partition or child declares it so -
+        // [review 2026-11-22] a step naming the template's table is the child's
+        if self.security.is_none() && template.security.is_some() {
+            self.security = template.security.as_ref().map(|l| l.of_child(&template.table_name, &self.table_name));
+        }
         // Note: primary key columns are inherited through merged columns with constraint.primaryKey
     }
 
@@ -1239,7 +1278,7 @@ pub(crate) fn analyze_type_change(existing: &str, desired: &str) -> TypeChange {
     let (existing_base, mut existing_size, existing_scale) = parse_type_size(existing);
     let (desired_base, mut desired_size, desired_scale) = parse_type_size(desired);
     // [mapping] a char with no length is a char(1), in PostgreSQL as in the standard: the loader
-    // writes bpchar(1) for it (owner, 2026-11-18), which is no change from a schema's bare char
+    // writes bpchar(1) for it, which is no change from a schema's bare char
     let is_char = |t: &str| matches!(t, "char" | "character" | "bpchar");
     if is_char(&existing_base) && existing_size.is_none() { existing_size = Some(1); }
     if is_char(&desired_base) && desired_size.is_none() { desired_size = Some(1); }
@@ -1433,7 +1472,7 @@ mod comment_tests {
 
 
 /// [mapping] char(n) as the loader writes it now, bpchar(n), and a schema's char or char(n): the
-/// same length is no change, a bare char is char(1) (owner, 2026-11-18)
+/// same length is no change, a bare char is char(1)
 #[cfg(test)]
 mod char_length_tests {
     use super::{analyze_type_change, TypeChange};

@@ -1,4 +1,4 @@
-//! [mapping] A schema of one database vendor written as another's (owner, 2026-11-18): the
+//! [mapping] A schema of one database vendor written as another's: the
 //! compatibility guard, as a declarative mapping from one vendor's YAML to another's, before any
 //! statement runs.
 //!
@@ -25,7 +25,7 @@
 //! Custom SQL - the `sql` of a table, a column, an index or a foreign key, and a table's
 //! `constraint` - is one vendor's own and is left out on a cross-vendor apply, each one said. A
 //! column's `sql` of keywords every vendor reads alike is converted instead, to the schema's own
-//! fields (owner, 2026-11-18): `UNIQUE` to its index's `unique: true` (the index named
+//! fields: `UNIQUE` to its index's `unique: true` (the index named
 //! `<table>_<column>_key` when it has none), `NOT NULL` and `NULL` to `nullable`, `PRIMARY KEY` to
 //! `primaryKey` - as a snapshot writes `sql: UNIQUE` for a unique column.
 //! The same vendor maps nothing: the schema is applied as it is.
@@ -165,7 +165,7 @@ pub struct Mapped {
 const BUILTIN: &[(&str, &str, &str)] = &[
     ("postgres", "mysql", include_str!("mappings/postgres-mysql.yaml")),
     ("postgres", "sqlite", include_str!("mappings/postgres-sqlite.yaml")),
-    // [mapping] from SQLite and from MySQL (owner, 2026-11-19)
+    // [mapping] from SQLite and from MySQL
     ("sqlite", "postgres", include_str!("mappings/sqlite-postgres.yaml")),
     ("sqlite", "mysql", include_str!("mappings/sqlite-mysql.yaml")),
     ("mysql", "postgres", include_str!("mappings/mysql-postgres.yaml")),
@@ -807,7 +807,7 @@ versions:
             .replace("                sql: COLLATE \"C\"\n", "                sql: unique\n                defaultValue: \"'it''s'\"\n");
         let y = YamlLoader::load_from_str(&text).unwrap().remove(0);
         let out = m.apply(&y, &Source::parse("mysql.8.0").unwrap()).unwrap();
-        // [owner, 2026-11-18] sql: UNIQUE converted to unique: true, its index named as PostgreSQL would
+        // sql: UNIQUE converted to unique: true, its index named as PostgreSQL would
         let c = col(&out.schema, "customer");
         assert!(c["sql"].is_badvalue());
         assert_eq!(c["index"]["unique"].as_bool(), Some(true));

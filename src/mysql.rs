@@ -1,4 +1,4 @@
-//! [mysql] MySQL (feature `mysql`, owner 2026-11-19): its catalog (information_schema) read into
+//! [mysql] MySQL (feature `mysql`): its catalog (information_schema) read into
 //! the schema's model, and a YAML schema deployed to it through the driver - sqlx's MySQL one,
 //! pure Rust, on tokio; no client library.
 //!
@@ -196,7 +196,7 @@ pub async fn load_info_schema(conn: &mut MySqlConnection, databases: &[&str]) ->
                 constraint_name: "PRIMARY".into(), columns: t.primary_key.clone() });
             tables.insert(name.clone(), PgTable {
                 table_name: name, columns, fks, triggers, indexes, grants: HashMap::new(), primary_key,
-                sort_order: i + 1, table_comment: None, owner: None });
+                sort_order: i + 1, table_comment: None, owner: None, security: None });
         }
         out.insert(db, tables);
     }

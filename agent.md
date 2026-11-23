@@ -185,6 +185,12 @@ Placeholders are the caller's job. For example, a schema stored with
 | `with_revoke` | a privilege that is no longer granted in the YAML is revoked |
 | `without_failfast` | a refused change is **skipped** and its SQL printed to stderr (or logged), instead of failing |
 | `with_ddl_retry` | each DDL statement runs in a `DO` block that retries up to 100 times on `lock_not_available`, with `lock_timeout` 1000 ms; a serial column added to an existing table is then expanded into an explicit sequence, because `serial` is not valid inside `EXECUTE` |
+| `security` (2.5.0, `SecurityMode`, default `Off`) | the tables' `security` declarations for this deploy - one mode for all of them, a table has no `rls` key: `Off` ignored (nothing installed or registered, a table left as it is); `Lsr(traversal)` registered only, labac's policies taken off - and with `true` the file checked before any DDL (`security::link`: a path leads through tables of the same file, the aliases unique in it), with `false` not (several files: sge); `Rls` policies on every declared table, the paths tested by the database. `FromStr`: `lsr` -> `Lsr(true)`, `rls` -> `Rls`, anything else `Off` |
+
+A builder (2.5.0) sets them one by one, the rest at their defaults:
+`MigrationOptions::new().with_size_cut(true).security(SecurityMode::Rls)` - a method per option,
+named as it is. sge builds its options with it (`sg_migration`: the flags, and `security=lsr|rls` -
+anything else off; its lsr is `Lsr(false)`).
 
 **Failfast is the default.** A refused change returns `Err`. With
 `migrate1` / `migrate_opt` the whole migration then rolls back, because it is
@@ -212,6 +218,7 @@ on); the SQL they print is correct.
 | table `owner` differs | `ALTER TABLE ... OWNER TO` |
 | `foreignKey` | `ALTER TABLE ... ADD CONSTRAINT fk_<schema>_<table>_<reftable>_<col> FOREIGN KEY ... REFERENCES` once, after all tables of the run |
 | `data` rows | `INSERT ... ON CONFLICT (<pk>) DO NOTHING`, see the traps below |
+| `security` (2.5.0) | after every table of the file, the defining declarations first (`security::deploy`): once per database the SQL part (`security::SQL`: schema `labac`, `labac.key`, `labac.checked/enter/enter_session/ids`, the registry `labac.tables`); the table's registry row (path, alias, endpoint); `GRANT EXECUTE ON FUNCTION labac.enter, labac.enter_session` to its grantees; with `rls: true` ENABLE + FORCE ROW LEVEL SECURITY and the policies `labac_select/insert/update/delete`, each commented with the declaration (path with its keys, alias, soft-delete mark) - made again only when it changed; a defining table's new alias carried to the registered tables that reach its entity (their rows, their policies); `data` rows between NO FORCE and FORCE. Run with DeployStep::Grants |
 
 ## YAML in short
 
@@ -355,6 +362,74 @@ only. The tests under `tests/` that need PostgreSQL carry `required-features = [
   Downstream crates may test an unreleased fix with `[patch.crates-io]`
   pointing at a local copy, so say in the change which version carries it.
   Publishing to crates.io is the maintainer's step.
+
+## State on 2026-11-21
+
+- 2.5.0, uncommitted, not published: a table's `security: {schemaPath, alias, softDelete}`
+  (`src/security.rs`, owner 2026-11-21 and 22; the key was `labac`, the alias `kind`, before).
+  - `schemaPath` is a list of `schema.table.column` steps: one column, or the join hops (each by the next
+    table's one-column primary key). `alias` is a name only - the user's attribute - said once by the table
+    that defines the entity (a one-step path; left out, the column's name) and taken by the tables whose paths
+    reach it. A kind read per row, `id_path` and `kind_path` are gone: nothing resolved is stored, the join
+    keys come from the catalog at deploy (`Security::resolve`).
+  - Named paths (2026-11-22, the owner's "security access level" and "a map of dml: sal: custom_name"): a table's
+    paths are ONE map, in the YAML and in the code - `Security.schema_path: BTreeMap<name, path>`, `dml`
+    (`security::DML`) the dml path, every other name a level (`sal`, `security::SAL`, or any name of the schema's
+    own): `schemaPath: {dml: [..], sal: [..], review: [..]}`. A list is the short form of `dml` alone. No second
+    field beside it: `Security::dml()`, `levels()`, `has_dml()`, `of_dml(path)` read the map; `Resolved.paths` and
+    `Registered.schema_path` are the same map (`Resolved::dml()`, `levels()`; `Security::resolve_paths`). The
+    registry keeps its two columns (`column_name` from 2.4, `levels`) and `from_registry` joins them. `level:` and
+    `levels:`, keys of their own for a day, are refused by name; `schemaPath` and `schema_path` both said is
+    refused; a name is taken as written (with a space it is no plain name: refused) and `dml` in any case is
+    never a level's. Written back (`Serialize`, by hand) the same way: a list without levels, the map with
+    them, `dml` first (test `a_declaration_is_written_as_it_is_read`).
+    A hidden parent denies (2026-11-22): a policy's EXISTS over a path reads the path's tables under their own
+    policies, and the choice `labac.any_id(..) OR <compare>` is INSIDE the EXISTS, so the user of every
+    resource of the alias is denied through a hidden or missing parent too (`condition`; `SIGNATURE` `labac:v6`;
+    real-server case in `rows_by_the_users_level`). A level is a second kind of access ANDed with the dml one:
+    the user's level of the name must be >= the row's. `has_dml()` is false for a table of levels alone (no
+    alias, no entity; its registry row has an empty `column_name` and `kind`). SQL part `labac:sql:5`:
+    `labac.level(name)`, `labac.any_id(kind, action)` (`any` is a reserved word), registry column `levels` (a JSON
+    map, name -> path joined by `|`); `SIGNATURE` `labac:v6`, so every policy is made again once. A level through
+    a join is an EXISTS with the compare inside (`level_condition`): a parent row missing or hidden denies, only
+    a NULL level value counts as 0. The dml condition is `(labac.any_id(..) OR <the compare>)`, inside the EXISTS for a path of joins. A level's last
+    column must be an integer type (`is_integer`, checked at deploy). `link` checks a level's path under
+    `Lsr(true)`; `recurses` follows it; the alias carry re-makes a dependent's policies with its levels.
+    Tests: `levels_are_read_and_checked`, `levels_in_the_policies_and_the_registry`,
+    `a_levels_path_in_the_files_checks_and_recursion`, `rows_by_the_users_level` (a real server).
+  - The mode is the deploy's, not a table's (2026-11-22): `SecurityMode { Off (default), Lsr(traversal), Rls }`,
+    `MigrationOptions.security` a plain `SecurityMode` - no `Option`, no `without_security_traversal`, no `rls` key
+    in the YAML (read only to be refused by name, as `kind`). `Security.rls` stays in the struct as what the mode
+    set (`Security::under`) or what the registry says; it is not serialized.
+  - `security::link` (from `migrate_plan`, before any DDL, not under `Off`) links the file's aliases and - under
+    `Lsr(true)` only - checks the traversal and the aliases' uniqueness;
+    `security::deploy` runs after the table pass, defining declarations first, and reads the registry for what
+    the file cannot say (an entity's alias, a contradicting one, a policy that would recurse).
+  - Review 2026-11-22 (4 reviewers, each finding verified; all in `src/security.rs` unless said): the registry is
+    read whatever the SQL part's version, and a row without `endpoint` says its entity by its path
+    (`Registered::entity`); a registry row whose names are not plain names is not read (they go into DDL); the
+    carry of a defining table's alias changes a dependent's row and policies together - a path that no longer
+    resolves stops the deploy, a row of a table the database no longer has is passed by; a `schemaPath` item that
+    is not a string is refused; `data` rows of a table still forced go in with FORCE lifted when this deploy takes
+    rls off (`force_lifted`, `table.rs`); a template's step naming the template's table is the child's
+    (`Security::of_child`, `Table::merge_from`), and a path to a template is said as that.
+  - The security pass is `security::deploy_all` (public): `migrate_plan` runs it after its table pass. A caller
+    that steps through the tables itself - sge does - runs `security::link` on the parsed file before and
+    `deploy_all` after; `Schema::deploy_all_tables_plan_pg` and `Table::deploy_plan_pg` alone deploy no
+    `security`. A registry row with an empty alias or path is not read; the carry refuses a dependent whose
+    soft-delete column is gone.
+  - The SQL part moved here from signon (signon's `labac::SQL` is `security::SQL`); the database objects stay
+    `labac.*` - the registry's `column_name` holds the path, `kind` the alias, `endpoint` the entity.
+    `Table.security` and `PgTable.security` are new fields, so a struct literal of them needs `security: None`
+    (sge's did). `MigrationOptions` has `security` and a builder. In `deploy` a traversing table's alias is
+    compared with this deploy's own defining table first, then the registry: a contradiction is refused under
+    every mode, the file's checks or not.
+  - Tests: `src/labac_test.rs` (the declaration, the file's checks, templates, a schema YAML to its resolved
+    paths, the SQL, recursion), `tests/labac_rls.rs` (a real server: rows by the token, a forged one refused,
+    the owner's data rows with FORCE on, items following their order whatever the file's order, across files
+    with the checks off, the alias carried from its defining table, two tables reading each other refused, data
+    rows when rls is taken off, a registry of an older version).
+    `~/git/tbd/labac.rs` is the module before the rename, out of the repository.
 
 ## State on 2026-11-19
 

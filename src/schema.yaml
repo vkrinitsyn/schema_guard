@@ -235,6 +235,67 @@ schema:
           type: array
           items:
             $ref: grant
+        security:
+          # [security] row access by the user's attribute: schemaPath (schema.table.column steps: a column of the
+          # table, or the join hops to one), alias (the attribute's name, said once by the table that defines the
+          # entity; left out, the entity's own or the last column's name), softDelete. schemaPath is the dml path
+          # alone - a list of steps - or a map of named paths: dml, and the row's levels by name (sal, the security
+          # access level, or any other; with a level the dml path may be left out). Whether it is deployed,
+          # and how, is the deploy's mode (off, lsr, rls) - not a table's key
+          type: object
+          items:
+            schemaPath:
+              oneOf:
+                - type: string
+                - type: array
+                  items:
+                    type: string
+                - type: hash
+                  items:
+                    oneOf:
+                      - type: string
+                      - type: array
+                        items:
+                          type: string
+            schema_path:
+              oneOf:
+                - type: string
+                - type: array
+                  items:
+                    type: string
+                - type: hash
+                  items:
+                    oneOf:
+                      - type: string
+                      - type: array
+                        items:
+                          type: string
+            alias:
+              type: string
+            # [levels] keys of their own before, names of the schemaPath map now: read only to be refused by
+            # name (security.rs `read`)
+            level:
+              oneOf:
+                - type: string
+                - type: array
+                  items:
+                    type: string
+            levels:
+              type: hash
+              items:
+                oneOf:
+                  - type: string
+                  - type: array
+                    items:
+                      type: string
+            # the alias's name before: read only to be refused by name (security.rs `read`)
+            kind:
+              type: string
+            softDelete:
+              type: string
+            # a table's key before the deploy's mode: read only to be refused by name (security.rs `read`)
+            rls:
+              type: boolean
         template:
           oneOf:
             #  this table will not create
