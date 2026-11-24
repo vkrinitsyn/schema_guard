@@ -31,7 +31,7 @@ thiserror = "^2.0"
 tokio = { version = "^1.54.1", features = ["test-util", "full"], optional = true }
 tokio-postgres = { version = "^0.7.18", optional = true }
 # [sqlite] SQLite, embedded: turso, as yt-lite uses it - no system library
-turso = { version = "=0.9.0-pre.5", optional = true }
+turso = { version = "=0.9.0-pre.6", optional = true }
 # [mysql] MySQL through sqlx (its MySQL driver, pure Rust, on tokio): no client library. 0.9 with TLS
 # (rustls) and without its RSA: sqlx 0.8 took rsa 0.9 (RUSTSEC-2023-0071, cargo audit failed, 2026-11-19);
 # MySQL 8's caching_sha2 sign-in goes over TLS, which its server makes by itself
